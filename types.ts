@@ -18,22 +18,24 @@ export enum ContentType {
     text: string;
     color: string;
     spokenText?: string;
-    image?: string;
-    gender?: 'm' | 'f' | string;
+    image?: string; 
+    gender?: string;
   }
 
   export interface UserProfile {
     uid: string;
-    displayName: string;
+    name: string;
     age: number;
     email: string;
-    photoURL?: string;
+    createdAt: number;
   }
 
+  // --- Statistics Types ---
+  
   export interface MemoryResult {
     id: string;
-    date: number;
-    difficulty: number;
+    date: number; 
+    difficulty: number; 
     timeSeconds: number;
     errors: number;
   }
@@ -43,7 +45,7 @@ export enum ContentType {
     wrong: number;
   }
 
-  export type QuizHistory = Record<string, QuizStats>;
+  export type QuizHistory = Record<ContentType, QuizStats>;
   
   export const COLORS = [
     '#FF5733', '#33FF57', '#3357FF', '#FF33A1', '#FFC300',
@@ -54,4 +56,9 @@ export enum ContentType {
     'A': 'Á', 'E': 'Ê', 'I': 'Í', 'O': 'Ó', 'U': 'Ú',
     'Y': 'ípsilon', 'W': 'dábliu', 'K': 'cá', 'H': 'agá',
     'X': 'xis', 'Z': 'zê'
+  };
+
+  export const ANIMAL_GENDER_MAP: Record<string, string> = {
+    'ARANHA': 'a', 'CORUJA': 'a', 'FOCA': 'a', 'GIRAFA': 'a',
+    'OVELHA': 'a', 'PREGUIÇA': 'a', 'RAPOSA': 'a', 'VACA': 'a', 'ZEBRA': 'a'
   };
