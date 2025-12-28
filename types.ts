@@ -19,41 +19,42 @@ export enum ContentType {
     color: string;
     spokenText?: string;
     image?: string; 
-    gender?: string;
+    gender?: 'm' | 'f' | string; // Novo campo vindo do Firebase
   }
 
-  export interface UserProfile {
-    uid: string;
-    name: string;
-    age: number;
-    email: string;
-    createdAt: number;
-  }
-
+  // --- Statistics Types ---
+  
   export interface MemoryResult {
     id: string;
-    date: number; 
-    difficulty: number; 
+    date: number; // Timestamp
+    difficulty: number; // Number of pairs
     timeSeconds: number;
     errors: number;
   }
 
-  export type QuizHistory = Record<ContentType, { correct: number, wrong: number }>;
+  export interface QuizStats {
+    correct: number;
+    wrong: number;
+  }
+
+  // Map ContentType to Stats
+  export type QuizHistory = Record<ContentType, QuizStats>;
   
   export const COLORS = [
-    '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEEAD',
-    '#D4A5A5', '#9B59B6', '#3498DB', '#E67E22', '#F1C40F'
+    '#FF5733', '#33FF57', '#3357FF', '#FF33A1', '#FFC300',
+    '#33FFF5', '#8E44AD', '#2ECC71', '#E67E22', '#E74C3C'
   ];
   
   export const PRONUNCIATION_MAP: Record<string, string> = {
-    'A': 'Á', 'E': 'Ê', 'I': 'Í', 'O': 'Ó', 'U': 'Ú',
-    'Y': 'ípsilon', 'W': 'dábliu', 'K': 'cá', 'H': 'agá',
-    'X': 'xis', 'Z': 'zê'
-  };
-
-  export const ANIMAL_GENDER_MAP: Record<string, string> = {
-    'ARANHA': 'a', 'CORUJA': 'a', 'FOCA': 'a', 'GIRAFA': 'a',
-    'OVELHA': 'a', 'PREGUIÇA': 'a', 'RAPOSA': 'a', 'VACA': 'a', 
-    'ZEBRA': 'a', 'BALEIA': 'a', 'JOANINHA': 'a', 'ÁGUIA': 'a',
-    'GALINHA': 'a', 'FÊNIX': 'a'
+    'A': 'Á',
+    'E': 'Ê',
+    'I': 'Í',
+    'O': 'Ó',
+    'U': 'Ú',
+    'Y': 'ípsilon',
+    'W': 'dábliu',
+    'K': 'cá',
+    'H': 'agá',
+    'X': 'xis',
+    'Z': 'zê'
   };

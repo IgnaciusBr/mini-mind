@@ -1,22 +1,36 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
-import { auth, db } from './firebase';
-import { 
-  ContentType, GameMode, COLORS, GameItem, 
-  PRONUNCIATION_MAP, ANIMAL_GENDER_MAP, UserProfile 
-} from './types';
+import { ContentType, GameMode, COLORS, GameItem, PRONUNCIATION_MAP, MemoryResult, QuizHistory, QuizStats } from './types';
 import { useSpeech } from './hooks/useSpeech';
 import Confetti, { ConfettiHandle } from './components/Confetti';
 import { GameButton } from './components/GameButton';
 import { MemoryCard } from './components/MemoryCard';
 import { Logo } from './components/Logo';
 import { Dashboard } from './components/Dashboard';
-import { Auth } from './components/Auth';
+import { db } from './firebase';
+import { collection, getDocs } from 'firebase/firestore';
 import { 
-  Menu, X, Play, HelpCircle, Eye, Hash, Type, Volume2, 
-  Cat, Grid, LayoutDashboard, Clock, RotateCcw, LogOut, Loader2
+  Menu, 
+  X,
+  Play,
+  HelpCircle,
+  Eye,
+  Hash,
+  Type,
+  Volume2,
+  CaseUpper,
+  CaseLower,
+  Mic,
+  Cat,
+  Grid,
+  Lock,
+  LayoutDashboard,
+  Clock,
+  AlertCircle,
+  Trophy,
+  Loader2,
+  RotateCcw,
+  Settings
 } from 'lucide-react';
 
 interface MemoryCardState {
@@ -27,16 +41,34 @@ interface MemoryCardState {
     isMatched: boolean;
 }
 
+const STORAGE_KEY_MEMORY = 'ab_memory_results';
+const STORAGE_KEY_QUIZ = 'ab_quiz_history';
+
+type ViewState = 'GAME' | 'DASHBOARD';
+
+// Helper: Efficiency Calculation (shared with Dashboard)
+const calculateEfficiency = (time: number, errors: number, difficulty: number) => {
+    let timePerPair = 3;
+    if (difficulty === 8) timePerPair = 4;
+    else if (difficulty === 10) timePerPair = 5;
+    else if (difficulty === 15) timePerPair = 6;
+    const parTime = difficulty * timePerPair;
+    const timePenalty = Math.max(0, (time - parTime) / 2);
+    const errorPenalty = errors * 10;
+    const score = 100 - timePenalty - errorPenalty;
+    return Math.max(0, Math.round(score));
+};
+
 const App: React.FC = () => {
-  const [user, setUser] = useState<any>(null);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [view, setView] = useState<'GAME' | 'DASHBOARD'>('GAME');
+  const [isLoadingAssets, setIsLoadingAssets] = useState(true);
+  const [dbAnimals, setDbAnimals] = useState<GameItem[]>([]);
+
+  const [view, setView] = useState<ViewState>('GAME');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [contentType, setContentType] = useState<ContentType>(ContentType.NUMBERS);
   const [gameMode, setGameMode] = useState<GameMode>(GameMode.EXPLORE);
   const [items, setItems] = useState<GameItem[]>([]);
-  const [firebaseAnimals, setFirebaseAnimals] = useState<GameItem[]>([]);
+  const [displayStyle, setDisplayStyle] = useState<'standard' | 'alternate'>('standard');
   
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const [quizTarget, setQuizTarget] = useState<GameItem | null>(null);
@@ -45,319 +77,587 @@ const App: React.FC = () => {
   const [feedback, setFeedback] = useState<'correct' | 'wrong' | null>(null);
   const [blockInput, setBlockInput] = useState(false);
 
+  // Memory Game State
+  const [quizSessionStats, setQuizSessionStats] = useState({ correct: 0, wrong: 0 });
   const [memoryCards, setMemoryCards] = useState<MemoryCardState[]>([]);
+  const [memoryDifficulty, setMemoryDifficulty] = useState<number>(6); 
   const [isMemorySetup, setIsMemorySetup] = useState(false); 
   const [memoryTime, setMemoryTime] = useState(0);
+  const [memoryErrors, setMemoryErrors] = useState(0);
   const [isMemoryTimerActive, setIsMemoryTimerActive] = useState(false);
+  const [isVictory, setIsVictory] = useState(false);
+  const [lastResult, setLastResult] = useState<MemoryResult | null>(null);
+  const [personalBest, setPersonalBest] = useState<number | null>(null);
 
-  const { speak } = useSpeech();
+  const { speak, voices, selectedVoice, setSelectedVoice } = useSpeech();
   const confettiRef = useRef<ConfettiHandle>(null);
   const flashcardIntervalRef = useRef<any>(null);
   const memoryTimerRef = useRef<any>(null);
-
-  // --- Auth & Initial Load ---
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (u) => {
-      if (u) {
-        const d = await getDoc(doc(db, 'users', u.uid));
-        if (d.exists()) setProfile(d.data() as UserProfile);
-        setUser(u);
-      } else {
-        setUser(null);
-        setProfile(null);
-      }
-      setAuthLoading(false);
-    });
-    return unsubscribe;
-  }, []);
+  const memoryPreviewTimeoutRef = useRef<any>(null);
 
   useEffect(() => {
-    const fetchAnimals = async () => {
+    const initializeData = async () => {
       try {
-        const querySnapshot = await getDocs(collection(db, 'animals'));
-        setFirebaseAnimals(querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          text: doc.data().name,
-          color: '#F8F1E1',
-          image: doc.data().image_url,
-          gender: doc.data().gender
-        })));
-      } catch (e) { console.error(e); }
+        const querySnapshot = await getDocs(collection(db, "animals"));
+        const fetchedAnimals: GameItem[] = querySnapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            text: data.name || "Sem nome",
+            spokenText: data.name,
+            color: '#E6DBBF',
+            image: data.image_url,
+            gender: data.gender || 'm'
+          };
+        });
+        setDbAnimals(fetchedAnimals);
+
+        const promises = fetchedAnimals.map((item) => {
+          if (!item.image) return Promise.resolve();
+          return new Promise((resolve) => {
+            const img = new Image();
+            img.src = item.image!;
+            img.onload = resolve;
+            img.onerror = resolve; 
+          });
+        });
+        await Promise.all(promises);
+      } catch (error) {
+        console.error("Erro ao carregar dados do Firebase:", error);
+      } finally {
+        setTimeout(() => setIsLoadingAssets(false), 500);
+      }
     };
-    fetchAnimals();
+    initializeData();
   }, []);
 
-  // --- Content Generation ---
   useEffect(() => {
-    if (contentType === ContentType.ANIMALS) {
-      setItems([...firebaseAnimals].sort(() => Math.random() - 0.5).slice(0, 15));
-    } else if (contentType === ContentType.NUMBERS) {
-      setItems(Array.from({length: 10}, (_, i) => ({ id: `n-${i+1}`, text: (i+1).toString(), color: COLORS[i % COLORS.length] })));
-    } else {
-      const data = contentType === ContentType.VOWELS ? ['A', 'E', 'I', 'O', 'U'] : "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split('');
-      setItems(data.map((c, i) => ({ id: `c-${i}`, text: c, color: COLORS[i % COLORS.length] })));
-    }
-  }, [contentType, firebaseAnimals]);
+    setDisplayStyle('standard');
+  }, [contentType]);
 
-  // --- Reset State on Mode Change ---
+  useEffect(() => {
+    let newItems: GameItem[] = [];
+    const isAlt = displayStyle === 'alternate';
+
+    if (contentType === ContentType.NUMBERS) {
+      newItems = Array.from({length: 10}, (_, i) => {
+        const num = i + 1;
+        return {
+          id: `num-${num}`,
+          text: num.toString(),
+          spokenText: num.toString(), 
+          color: COLORS[i % COLORS.length]
+        };
+      });
+    } 
+    else if (contentType === ContentType.ANIMALS) {
+        const shuffled = [...dbAnimals].sort(() => Math.random() - 0.5);
+        newItems = shuffled.slice(0, 15);
+    }
+    else {
+      let data: string[] = [];
+      if (contentType === ContentType.VOWELS) data = ['A', 'E', 'I', 'O', 'U'];
+      else if (contentType === ContentType.ALPHABET) data = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split('');
+
+      newItems = data.map((char, i) => {
+        return {
+          id: `${contentType}-${i}`,
+          text: isAlt ? char.toLowerCase() : char,
+          spokenText: char, 
+          color: COLORS[i % COLORS.length]
+        };
+      });
+    }
+    setItems(newItems);
+  }, [contentType, displayStyle, dbAnimals]);
+
   useEffect(() => {
     if (flashcardIntervalRef.current) clearInterval(flashcardIntervalRef.current);
     if (memoryTimerRef.current) clearInterval(memoryTimerRef.current);
+    if (memoryPreviewTimeoutRef.current) clearTimeout(memoryPreviewTimeoutRef.current);
     
     setFeedback(null);
     setBlockInput(false);
+    setActiveItemId(null); 
     setQuizTarget(null);
-    setIsMemorySetup(false);
+    if (gameMode !== GameMode.MEMORY) setIsMemorySetup(false); 
+    setQuizSessionStats({ correct: 0, wrong: 0 }); 
     setIsMemoryTimerActive(false);
+    setIsVictory(false);
 
-    if (gameMode === GameMode.QUIZ) startQuizRound(items);
-    else if (gameMode === GameMode.FLASHCARD) startFlashcard(items);
-  }, [gameMode, contentType, view]);
+    if (gameMode === GameMode.QUIZ) {
+      startQuizRound(items);
+    } else if (gameMode === GameMode.FLASHCARD) {
+      startFlashcard(items);
+    }
+  }, [gameMode, items, view]);
 
   useEffect(() => {
-    if (isMemoryTimerActive) memoryTimerRef.current = setInterval(() => setMemoryTime(t => t + 1), 1000);
-    else clearInterval(memoryTimerRef.current);
+    if (isMemoryTimerActive) {
+        memoryTimerRef.current = setInterval(() => setMemoryTime(prev => prev + 1), 1000);
+    } else {
+        clearInterval(memoryTimerRef.current);
+    }
     return () => clearInterval(memoryTimerRef.current);
   }, [isMemoryTimerActive]);
 
-  // --- Helpers ---
-  const formatTime = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
-  const getArt = (it: GameItem) => ANIMAL_GENDER_MAP[it.text.toUpperCase()] === 'a' ? 'a' : 'o';
-
-  // --- Game Logic ---
-  const startMemoryGame = (pairs: number) => {
-    let pool = contentType === ContentType.ANIMALS ? firebaseAnimals : items;
-    if (pool.length < pairs) pool = firebaseAnimals;
-    const selected = [...pool].sort(() => Math.random() - 0.5).slice(0, pairs);
-    let cards: MemoryCardState[] = [];
-    selected.forEach(it => {
-      cards.push({ id: `${it.id}-1`, pairId: it.id, item: it, isFlipped: true, isMatched: false });
-      cards.push({ id: `${it.id}-2`, pairId: it.id, item: it, isFlipped: true, isMatched: false });
-    });
-    setMemoryCards(cards.sort(() => Math.random() - 0.5));
-    setIsMemorySetup(true);
-    setMemoryTime(0);
-    setBlockInput(true);
-    speak("Memorize!");
-    setTimeout(() => {
-      setMemoryCards(prev => prev.map(c => ({ ...c, isFlipped: false })));
-      setBlockInput(false);
-      setIsMemoryTimerActive(true);
-    }, pairs * 500);
+  const saveQuizStats = (isCorrect: boolean) => {
+    setQuizSessionStats(prev => ({
+        correct: prev.correct + (isCorrect ? 1 : 0),
+        wrong: prev.wrong + (isCorrect ? 0 : 1)
+    }));
+    const saved = localStorage.getItem(STORAGE_KEY_QUIZ);
+    let history: QuizHistory = saved ? JSON.parse(saved) : {};
+    if (!history[contentType]) history[contentType] = { correct: 0, wrong: 0 };
+    if (isCorrect) history[contentType].correct++; else history[contentType].wrong++;
+    localStorage.setItem(STORAGE_KEY_QUIZ, JSON.stringify(history));
   };
 
-  const handleMemoryClick = (id: string) => {
-    if (blockInput) return;
-    const idx = memoryCards.findIndex(c => c.id === id);
-    if (idx === -1 || memoryCards[idx].isFlipped || memoryCards[idx].isMatched) return;
+  const saveMemoryResult = () => {
+    const result: MemoryResult = {
+        id: Date.now().toString(),
+        date: Date.now(),
+        difficulty: memoryDifficulty,
+        timeSeconds: memoryTime,
+        errors: memoryErrors
+    };
+    const saved = localStorage.getItem(STORAGE_KEY_MEMORY);
+    const results: MemoryResult[] = saved ? JSON.parse(saved) : [];
+    
+    // Check for personal best
+    const previousBest = results
+        .filter(r => r.difficulty === memoryDifficulty)
+        .reduce((best, curr) => (!best || curr.timeSeconds < best) ? curr.timeSeconds : best, null as number | null);
+    setPersonalBest(previousBest);
+
+    results.push(result);
+    localStorage.setItem(STORAGE_KEY_MEMORY, JSON.stringify(results));
+    return result;
+  };
+
+  const getPhonetic = (text: string) => PRONUNCIATION_MAP[text.toUpperCase()] || text;
+  const getSpeakableText = (item: GameItem) => item.spokenText || item.text;
+  const getArticle = (item: GameItem) => item.gender === 'f' ? 'a' : 'o';
+
+  const startMemoryGame = (pairCount: number) => {
+    if (memoryPreviewTimeoutRef.current) clearTimeout(memoryPreviewTimeoutRef.current);
+    let sourceItems = contentType === ContentType.ANIMALS ? dbAnimals : items;
+    if (sourceItems.length === 0) return;
+
+    setBlockInput(true);
+    setMemoryDifficulty(pairCount);
+    setIsVictory(false);
+    setLastResult(null);
+    
+    const shuffledItems = [...sourceItems].sort(() => Math.random() - 0.5);
+    const selectedItems = shuffledItems.slice(0, pairCount);
+    
+    let cards: MemoryCardState[] = [];
+    selectedItems.forEach(item => {
+        cards.push({ id: `${item.id}-1`, pairId: item.id, item, isFlipped: true, isMatched: false });
+        cards.push({ id: `${item.id}-2`, pairId: item.id, item, isFlipped: true, isMatched: false });
+    });
+
+    cards = cards.sort(() => Math.random() - 0.5);
+    setMemoryCards(cards);
+    setIsMemorySetup(true);
+    setMemoryTime(0);
+    setMemoryErrors(0);
+    setIsMemoryTimerActive(false);
+
+    speak("Memorize as cartas!");
+    memoryPreviewTimeoutRef.current = setTimeout(() => {
+        setMemoryCards(prev => prev.map(c => ({ ...c, isFlipped: false })));
+        setBlockInput(false);
+        speak("Valendo!");
+        setIsMemoryTimerActive(true);
+    }, Math.max(2000, pairCount * 400));
+  };
+
+  const handleMemoryCardClick = (cardId: string) => {
+    if (blockInput || isVictory) return;
+    const cardIndex = memoryCards.findIndex(c => c.id === cardId);
+    if (cardIndex === -1 || memoryCards[cardIndex].isFlipped || memoryCards[cardIndex].isMatched) return;
 
     const newCards = [...memoryCards];
-    newCards[idx].isFlipped = true;
+    newCards[cardIndex].isFlipped = true;
     setMemoryCards(newCards);
-    speak(newCards[idx].item.text);
+    speak(getSpeakableText(newCards[cardIndex].item));
 
-    const active = newCards.filter(c => c.isFlipped && !c.isMatched);
-    if (active.length === 2) {
-      setBlockInput(true);
-      const [c1, c2] = active;
-      if (c1.pairId === c2.pairId) {
-        setTimeout(() => {
-          setMemoryCards(prev => prev.map(c => (c.id === c1.id || c.id === c2.id) ? { ...c, isMatched: true } : c));
-          confettiRef.current?.explode(window.innerWidth/2, window.innerHeight/2);
-          setBlockInput(false);
-          if (newCards.every(c => c.isMatched || (c.id === c1.id || c.id === c2.id))) {
-            setIsMemoryTimerActive(false);
-            speak("Você ganhou!");
-          }
-        }, 500);
-      } else {
-        setTimeout(() => {
-          setMemoryCards(prev => prev.map(c => (c.id === c1.id || c.id === c2.id) ? { ...c, isFlipped: false } : c));
-          setBlockInput(false);
-        }, 1200);
-      }
+    const flippedCards = newCards.filter(c => c.isFlipped && !c.isMatched);
+    if (flippedCards.length === 2) {
+        setBlockInput(true);
+        const [c1, c2] = flippedCards;
+        if (c1.pairId === c2.pairId) {
+            setTimeout(() => {
+                const updatedCards = newCards.map(c => (c.id === c1.id || c.id === c2.id) ? { ...c, isMatched: true } : c);
+                setMemoryCards(updatedCards);
+                
+                if (confettiRef.current) confettiRef.current.explode(window.innerWidth / 2, window.innerHeight / 2);
+                
+                const allMatched = updatedCards.every(c => c.isMatched);
+                if (allMatched) {
+                    setIsMemoryTimerActive(false);
+                    const result = saveMemoryResult();
+                    setLastResult(result);
+                    setTimeout(() => {
+                        setIsVictory(true);
+                        speak("Incrível! Você conseguiu completar o desafio!");
+                    }, 500);
+                } else {
+                    speak("Muito bem!");
+                    setBlockInput(false);
+                }
+            }, 600);
+        } else {
+            setMemoryErrors(prev => prev + 1);
+            setTimeout(() => {
+                setMemoryCards(prev => prev.map(c => (c.id === c1.id || c.id === c2.id) ? { ...c, isFlipped: false } : c));
+                setBlockInput(false);
+            }, 1200);
+        }
     }
   };
 
-  const startQuizRound = (its: GameItem[]) => {
-    if (its.length === 0) return;
-    const target = its[Math.floor(Math.random() * its.length)];
+  const startQuizRound = (currentItems: GameItem[]) => {
+    if (currentItems.length === 0) return;
+    setFeedback(null);
+    setBlockInput(true); 
+    const target = currentItems[Math.floor(Math.random() * currentItems.length)];
     setQuizTarget(target);
-    const opts = [target, ...its.filter(i => i.id !== target.id).sort(() => Math.random() - 0.5).slice(0, 2)];
+    const opts = [target];
+    const pool = currentItems.filter(i => i.id !== target.id);
+    while(opts.length < 3 && pool.length > 0) {
+      const idx = Math.floor(Math.random() * pool.length);
+      opts.push(pool[idx]);
+      pool.splice(idx, 1);
+    }
     setQuizOptions(opts.sort(() => Math.random() - 0.5));
-    setBlockInput(true);
-    setTimeout(() => speak(`Onde está ${getArt(target)} ${target.text}?`, () => setBlockInput(false)), 500);
+    setTimeout(() => {
+      speak(`Cadê ${getArticle(target)} ${getPhonetic(getSpeakableText(target))}?`, () => setBlockInput(false));
+    }, 500);
   };
 
-  const startFlashcard = (its: GameItem[]) => {
-    if (its.length === 0) return;
+  const startFlashcard = (currentItems: GameItem[]) => {
+    if (currentItems.length === 0) return;
     setFlashcardIndex(0);
-    speak(its[0].text);
+    speak(getSpeakableText(currentItems[0]));
     flashcardIntervalRef.current = setInterval(() => {
-      setFlashcardIndex(p => {
-        const next = (p + 1) % its.length;
-        speak(its[next].text);
+      setFlashcardIndex(prev => {
+        const next = (prev + 1) % currentItems.length;
+        speak(getSpeakableText(currentItems[next]));
         return next;
       });
     }, 3500);
   };
 
-  const handleItemClick = (it: GameItem, e: any) => {
+  const handleItemClick = (item: GameItem, e: React.MouseEvent | React.TouchEvent) => {
     if (blockInput) return;
+    const rect = (e.target as HTMLElement).getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const speakable = getSpeakableText(item);
+
     if (gameMode === GameMode.EXPLORE) {
-      setActiveItemId(it.id);
-      confettiRef.current?.explode(e.clientX, e.clientY);
-      speak(it.text);
-    } else if (gameMode === GameMode.QUIZ) {
-      if (it.id === quizTarget?.id) {
+      setActiveItemId(item.id);
+      if (confettiRef.current) confettiRef.current.explode(x, y);
+      speak(speakable);
+    } 
+    else if (gameMode === GameMode.QUIZ) {
+      if (item.id === quizTarget?.id) {
         setFeedback('correct');
+        saveQuizStats(true);
         setBlockInput(true);
-        confettiRef.current?.explode(e.clientX, e.clientY);
+        if (confettiRef.current) confettiRef.current.explode(x, y);
         speak("Parabéns!", () => setTimeout(() => startQuizRound(items), 1000));
       } else {
         setFeedback('wrong');
+        saveQuizStats(false);
         setBlockInput(true);
-        speak(`Não! Esse é ${getArt(it)} ${it.text}.`, () => {
-          setFeedback(null);
-          setTimeout(() => speak(`Tente de novo. Onde está ${getArt(quizTarget!)} ${quizTarget!.text}?`, () => setBlockInput(false)), 500);
+        speak(`Não! Esse é ${getArticle(item)} ${getPhonetic(speakable)}.`, () => {
+            setFeedback(null);
+            setTimeout(() => {
+                if (quizTarget) {
+                  speak(`Tente de novo. Cadê ${getArticle(quizTarget)} ${getPhonetic(getSpeakableText(quizTarget))}?`, () => setBlockInput(false));
+                } else { setBlockInput(false); }
+            }, 500);
         });
       }
     }
   };
 
-  if (authLoading) return <div className="h-screen w-screen flex items-center justify-center"><Loader2 className="animate-spin text-blue-500" size={48} /></div>;
-  if (!user) return <Auth />;
+  const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
+  const getTitle = () => {
+    if (view === 'DASHBOARD') return "Dashboard";
+    if (gameMode === GameMode.MEMORY) return isVictory ? "Vitória!" : "Jogo da Memória";
+    if (gameMode === GameMode.QUIZ && quizTarget) return `Encontre: ${quizTarget.text}`;
+    if (gameMode === GameMode.FLASHCARD) return "Observe";
+    return "Toque para Aprender";
+  };
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const getGridClass = () => {
+    if (contentType === ContentType.ANIMALS) return 'grid-cols-3 grid-rows-5 md:grid-cols-5 md:grid-rows-3 gap-2 md:gap-3 p-2 h-full';
+    if (contentType === ContentType.ALPHABET) return 'grid-cols-4 grid-rows-7 md:grid-cols-7 md:grid-rows-4 gap-2 md:gap-3 p-2 h-full';
+    if (contentType === ContentType.NUMBERS) return 'grid-cols-2 grid-rows-5 md:grid-cols-5 md:grid-rows-2 gap-3 p-4 h-full';
+    return 'grid-cols-2 grid-rows-3 md:grid-cols-5 md:grid-rows-1 gap-4 md:gap-8 p-8 h-full';
+  };
+
+  const getMemoryGridClass = (pairCount: number) => {
+      const totalCards = pairCount * 2;
+      if (totalCards === 12) return 'grid-cols-3 grid-rows-4 md:grid-cols-4 md:grid-rows-3';
+      if (totalCards === 16) return 'grid-cols-4 grid-rows-4';
+      if (totalCards === 20) return 'grid-cols-4 grid-rows-5 md:grid-cols-5 md:grid-rows-4';
+      if (totalCards === 30) return 'grid-cols-5 grid-rows-6 md:grid-cols-6 md:grid-rows-5';
+      return 'grid-cols-4 grid-rows-4 md:grid-cols-6 md:grid-rows-4';
+  };
+
+  if (isLoadingAssets) {
+    return (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-50">
+            <div className="animate-bounce mb-8">
+                <Logo className="w-64 h-auto" />
+            </div>
+            <div className="flex flex-col items-center gap-4">
+                <Loader2 className="animate-spin text-blue-500" size={48} />
+                <p className="text-xl font-bold text-slate-500 animate-pulse">Preparando a diversão...</p>
+            </div>
+        </div>
+    );
+  }
 
   return (
-    <div className="h-screen w-screen overflow-hidden flex flex-col bg-slate-50 relative">
+    <div className="relative w-screen h-screen overflow-hidden flex flex-col text-slate-700 bg-transparent">
       <Confetti ref={confettiRef} />
-      
-      {/* Sidebar Overlay */}
-      <div className={`fixed inset-0 z-50 transition-all ${isSidebarOpen ? 'bg-black/20 backdrop-blur-sm pointer-events-auto' : 'pointer-events-none bg-transparent'}`} onClick={() => setIsSidebarOpen(false)} />
-      
-      <div className={`fixed inset-y-0 left-0 z-[60] w-72 bg-white shadow-2xl transition-transform duration-300 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:relative md:translate-x-0`}>
-        <div className="p-6 border-b flex items-center justify-between">
-          <Logo className="h-8 w-auto" />
-          <button onClick={() => setIsSidebarOpen(false)} className="md:hidden p-2 text-slate-400"><X /></button>
+      <div className={`fixed inset-y-4 left-4 z-50 w-72 bg-white/90 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/50 transform transition-transform duration-300 ease-in-out flex flex-col md:absolute md:translate-x-0 md:h-auto md:m-0 md:rounded-3xl md:top-4 md:left-4 md:bottom-4 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-[120%]'}`}>
+        <div className="p-6 border-b border-slate-100/50 flex justify-between items-center h-24 shrink-0">
+          <Logo className="h-14 w-auto" />
+          <button onClick={toggleSidebar} className="md:hidden p-2 bg-slate-100 rounded-full text-slate-500"><X size={20} /></button>
         </div>
-        <div className="p-4 space-y-6 overflow-y-auto h-[calc(100vh-160px)] custom-scrollbar">
-          <SidebarBtn active={view === 'DASHBOARD'} onClick={() => { setView('DASHBOARD'); setIsSidebarOpen(false); }} icon={<LayoutDashboard size={20} />} label="Progresso" color="#64748b" />
+        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-8">
+          <SidebarBtn active={view === 'DASHBOARD'} onClick={() => { setView('DASHBOARD'); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<LayoutDashboard size={20} />} label="Dashboard" colorClass="bg-slate-600 shadow-slate-300" />
           <div>
-            <p className="px-3 text-[10px] font-black text-slate-300 uppercase tracking-widest mb-2">Categorias</p>
-            <SidebarBtn active={view === 'GAME' && contentType === ContentType.NUMBERS} onClick={() => { setView('GAME'); setContentType(ContentType.NUMBERS); setIsSidebarOpen(false); }} icon={<Hash size={20} />} label="Números" color="#60a5fa" disabled={gameMode === GameMode.MEMORY} />
-            <SidebarBtn active={view === 'GAME' && contentType === ContentType.ALPHABET} onClick={() => { setView('GAME'); setContentType(ContentType.ALPHABET); setIsSidebarOpen(false); }} icon={<Type size={20} />} label="Alfabeto" color="#4ade80" disabled={gameMode === GameMode.MEMORY} />
-            <SidebarBtn active={view === 'GAME' && contentType === ContentType.ANIMALS} onClick={() => { setView('GAME'); setContentType(ContentType.ANIMALS); setIsSidebarOpen(false); }} icon={<Cat size={20} />} label="Animais" color="#fbbf24" />
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 ml-2">Aprender</h3>
+            <div className="space-y-3">
+              <SidebarBtn active={view === 'GAME' && contentType === ContentType.NUMBERS} onClick={() => { setView('GAME'); if(gameMode !== GameMode.MEMORY) setContentType(ContentType.NUMBERS); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Hash size={20} />} label="123 Números" colorClass="bg-blue-400 shadow-blue-200" disabled={gameMode === GameMode.MEMORY} />
+              <SidebarBtn active={view === 'GAME' && contentType === ContentType.ALPHABET} onClick={() => { setView('GAME'); if(gameMode !== GameMode.MEMORY) setContentType(ContentType.ALPHABET); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Type size={20} />} label="ABC Alfabeto" colorClass="bg-green-400 shadow-green-200" disabled={gameMode === GameMode.MEMORY} />
+              <SidebarBtn active={view === 'GAME' && contentType === ContentType.VOWELS} onClick={() => { setView('GAME'); if(gameMode !== GameMode.MEMORY) setContentType(ContentType.VOWELS); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Volume2 size={20} />} label="AEIOU Vogais" colorClass="bg-purple-400 shadow-purple-200" disabled={gameMode === GameMode.MEMORY} />
+              <SidebarBtn active={view === 'GAME' && contentType === ContentType.ANIMALS} onClick={() => { setView('GAME'); setContentType(ContentType.ANIMALS); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Cat size={20} />} label="Animais" colorClass="bg-yellow-400 shadow-yellow-200" />
+            </div>
           </div>
           <div>
-            <p className="px-3 text-[10px] font-black text-slate-300 uppercase tracking-widest mb-2">Jogar</p>
-            <SidebarBtn active={view === 'GAME' && gameMode === GameMode.EXPLORE} onClick={() => { setView('GAME'); setGameMode(GameMode.EXPLORE); setIsSidebarOpen(false); }} icon={<Eye size={20} />} label="Explorar" color="#fb923c" />
-            <SidebarBtn active={view === 'GAME' && gameMode === GameMode.FLASHCARD} onClick={() => { setView('GAME'); setGameMode(GameMode.FLASHCARD); setIsSidebarOpen(false); }} icon={<Play size={20} />} label="Assistir" color="#f472b6" />
-            <SidebarBtn active={view === 'GAME' && gameMode === GameMode.QUIZ} onClick={() => { setView('GAME'); setGameMode(GameMode.QUIZ); setIsSidebarOpen(false); }} icon={<HelpCircle size={20} />} label="Quiz" color="#2dd4bf" />
-            <SidebarBtn active={view === 'GAME' && gameMode === GameMode.MEMORY} onClick={() => { setView('GAME'); setGameMode(GameMode.MEMORY); setContentType(ContentType.ANIMALS); setIsSidebarOpen(false); }} icon={<Grid size={20} />} label="Memória" color="#818cf8" />
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 ml-2">Modo de Jogo</h3>
+            <div className="space-y-3">
+              <SidebarBtn active={view === 'GAME' && gameMode === GameMode.EXPLORE} onClick={() => { setView('GAME'); setGameMode(GameMode.EXPLORE); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Eye size={20} />} label="Explorar" colorClass="bg-orange-400 shadow-orange-200" />
+              <SidebarBtn active={view === 'GAME' && gameMode === GameMode.FLASHCARD} onClick={() => { setView('GAME'); setGameMode(GameMode.FLASHCARD); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Play size={20} />} label="Flashcards" colorClass="bg-pink-400 shadow-pink-200" />
+              <SidebarBtn active={view === 'GAME' && gameMode === GameMode.QUIZ} onClick={() => { setView('GAME'); setGameMode(GameMode.QUIZ); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<HelpCircle size={20} />} label="Quiz" colorClass="bg-teal-400 shadow-teal-200" />
+              <SidebarBtn active={view === 'GAME' && gameMode === GameMode.MEMORY} onClick={() => { setView('GAME'); setGameMode(GameMode.MEMORY); setContentType(ContentType.ANIMALS); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Grid size={20} />} label="Memória" colorClass="bg-indigo-400 shadow-indigo-200" />
+            </div>
           </div>
-        </div>
-        <div className="p-4 border-t">
-          <button onClick={() => signOut(auth)} className="w-full flex items-center gap-3 p-3 text-slate-400 font-bold hover:text-red-500 transition-colors"><LogOut size={18} /> Sair</button>
+          <div>
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 ml-2 flex items-center gap-2"><Mic size={14} /> Voz</h3>
+            <select className="w-full p-3 rounded-xl border-2 border-slate-100 bg-slate-50 text-sm font-semibold text-slate-600 focus:outline-none focus:border-blue-300 transition-colors" onChange={(e) => setSelectedVoice(voices[parseInt(e.target.value)])} value={voices.indexOf(selectedVoice as SpeechSynthesisVoice)}>
+              {voices.length === 0 && <option>Padrão</option>}
+              {voices.map((v, i) => (<option key={i} value={i}>{v.name.replace(/(Microsoft|Google) /, '').slice(0, 20)}</option>))}
+            </select>
+          </div>
         </div>
       </div>
-
-      <main className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 flex items-center justify-between px-4 shrink-0 bg-white/50 backdrop-blur-md">
-          <button onClick={() => setIsSidebarOpen(true)} className="md:hidden p-2 text-slate-600"><Menu /></button>
-          <div className="flex-1 flex justify-center">
-            {gameMode === GameMode.MEMORY && isMemorySetup ? (
-              <div className="flex items-center gap-4 bg-white px-4 py-1.5 rounded-2xl shadow-sm border">
-                <div className="flex items-center gap-2 font-black text-orange-500 text-sm"><Clock size={16}/>{formatTime(memoryTime)}</div>
-                <button onClick={() => setIsMemorySetup(false)} className="text-blue-500 font-black text-sm flex items-center gap-1 hover:scale-105 transition-transform"><RotateCcw size={16}/>Novo</button>
-              </div>
-            ) : (
-              <h1 className="text-lg md:text-xl font-black text-slate-700 truncate px-2">
-                {view === 'DASHBOARD' ? "Meu Progresso" : gameMode === GameMode.QUIZ && quizTarget ? `Onde está ${getArt(quizTarget)} ${quizTarget.text}?` : "Aprenda Brincando"}
-              </h1>
-            )}
+      {isSidebarOpen && (<div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40 md:hidden" onClick={toggleSidebar} />)}
+      <main className="flex-1 flex flex-col relative h-full md:pl-[300px]">
+        <header className="h-14 md:h-16 shrink-0 flex items-center justify-between px-4 z-20">
+          <button onClick={toggleSidebar} className="p-3 rounded-2xl bg-white shadow-lg shadow-slate-200/50 text-slate-600 md:hidden active:scale-95 transition-transform"><Menu size={20} /></button>
+          <div className="flex-1 flex justify-center items-center gap-4">
+            <h1 className="text-xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 drop-shadow-sm truncate px-4 py-2">{getTitle()}</h1>
           </div>
-          <div className="w-10 md:hidden" />
+          <div className="w-12 md:hidden"></div>
         </header>
 
-        <div className="flex-1 p-2 md:p-6 overflow-hidden relative flex flex-col items-center justify-center">
-          {view === 'DASHBOARD' && <Dashboard user={user} />}
-          {view === 'GAME' && (
-            <div className="w-full h-full flex flex-col items-center justify-center">
-              {feedback && <div className="fixed inset-0 z-50 flex items-center justify-center text-8xl md:text-9xl animate-bounce pointer-events-none">{feedback === 'correct' ? '🌟' : '🤔'}</div>}
-              
-              {gameMode === GameMode.EXPLORE && (
-                <div className={`grid w-full h-full gap-3 p-2 overflow-y-auto content-start justify-items-center ${contentType === ContentType.ANIMALS ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-3 md:grid-cols-6'}`}>
-                  {items.map(it => (
-                    <div key={it.id} className="w-full aspect-square relative group">
-                      <GameButton 
-                        text={contentType === ContentType.ANIMALS ? '' : it.text} color={it.color} 
-                        active={activeItemId === it.id} isWhiteVariant={activeItemId !== it.id}
-                        onClick={(e) => handleItemClick(it, e)} isFlat={contentType === ContentType.ANIMALS}
-                        className="w-full h-full"
-                      />
-                      {contentType === ContentType.ANIMALS && (
-                        <div className="absolute inset-0 p-3 pointer-events-none flex flex-col items-center justify-center">
-                          <img src={it.image} className="w-4/5 h-4/5 object-contain" alt={it.text} />
-                          <span className="text-[10px] font-black text-slate-400 mt-1 uppercase truncate w-full text-center">{it.text}</span>
+        <div className="flex-1 overflow-hidden relative p-2 md:p-4 flex flex-col items-center justify-center min-h-0">
+            {view === 'DASHBOARD' && <Dashboard />}
+            {view === 'GAME' && (
+                <>
+                    {feedback && (<div className="absolute inset-0 z-50 flex items-center justify-center bg-white/20 backdrop-blur-sm animate-in fade-in duration-200"><div className="text-9xl animate-bounce filter drop-shadow-2xl">{feedback === 'correct' ? '🌟' : '🤔'}</div></div>)}
+                    
+                    {gameMode === GameMode.EXPLORE && (
+                        <div className={`w-full h-full grid content-center justify-center justify-items-center overflow-y-auto custom-scrollbar ${getGridClass()}`}>
+                            {items.map((item) => (
+                                <div key={item.id} className="w-full h-full flex items-center justify-center relative group min-w-0 min-h-0"> 
+                                    {contentType === ContentType.ANIMALS ? (
+                                        <div className="aspect-square h-[95%] w-auto max-w-full flex items-center justify-center relative shadow-sm rounded-2xl">
+                                            <GameButton text="" color={item.color} active={activeItemId === item.id} onClick={(e) => handleItemClick(item, e)} isFlat={true} className="w-full h-full !aspect-auto" />
+                                            <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-[15%]"><img src={item.image} alt={item.text} className="w-full h-full object-contain drop-shadow-sm" /></div>
+                                        </div>
+                                    ) : (
+                                        <div className="w-full h-full flex items-center justify-center min-h-0 min-w-0"><GameButton text={item.text} color={item.color} active={activeItemId === item.id} isWhiteVariant={activeItemId !== item.id} showDots={displayStyle === 'alternate' && contentType === ContentType.NUMBERS} onClick={(e) => handleItemClick(item, e)} className="h-[85%] w-auto max-w-full aspect-square shadow-sm" /></div>
+                                    )}
+                                </div>
+                            ))}
                         </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
+                    )}
 
-              {gameMode === GameMode.FLASHCARD && items.length > 0 && (
-                <div className="w-full max-w-sm aspect-square p-4 relative">
-                  <GameButton text={contentType === ContentType.ANIMALS ? '' : items[flashcardIndex].text} color={items[flashcardIndex].color} className="w-full h-full" onClick={() => {}} />
-                  {contentType === ContentType.ANIMALS && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
-                      <img src={items[flashcardIndex].image} className="w-2/3 h-2/3 object-contain mb-4" />
-                      <span className="text-3xl font-black text-slate-700 uppercase">{items[flashcardIndex].text}</span>
-                    </div>
-                  )}
-                </div>
-              )}
+                    {gameMode === GameMode.FLASHCARD && items.length > 0 && (
+                        <div className="w-full h-full flex items-center justify-center p-4">
+                            <div className="w-[min(65vh,80vw)] aspect-square animate-fade-in relative group">
+                                <GameButton text={contentType === ContentType.ANIMALS ? '' : items[flashcardIndex].text} color={items[flashcardIndex].color} size="large" showDots={displayStyle === 'alternate' && contentType === ContentType.NUMBERS} onClick={(e) => handleItemClick(items[flashcardIndex], e)} isFlat={contentType === ContentType.ANIMALS} className="w-full h-full" />
+                                {contentType === ContentType.ANIMALS && (
+                                    <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-6 pb-8">
+                                        <div className="flex-1 w-full flex items-center justify-center overflow-hidden mb-4"><img src={items[flashcardIndex].image} alt={items[flashcardIndex].text} className="max-w-full max-h-full object-contain drop-shadow-sm" /></div>
+                                        <span className="text-3xl md:text-5xl font-black text-slate-700 drop-shadow-sm tracking-wide">{items[flashcardIndex].text}</span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
 
-              {gameMode === GameMode.QUIZ && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-2xl p-4">
-                  {quizOptions.map(it => (
-                    <div key={it.id} className="w-full aspect-square relative">
-                      <GameButton text={contentType === ContentType.ANIMALS ? '' : it.text} color={it.color} onClick={(e) => handleItemClick(it, e)} isFlat={contentType === ContentType.ANIMALS} className="w-full h-full" />
-                      {contentType === ContentType.ANIMALS && <div className="absolute inset-0 p-6 pointer-events-none flex items-center justify-center"><img src={it.image} className="w-full h-full object-contain" /></div>}
-                    </div>
-                  ))}
-                </div>
-              )}
+                    {gameMode === GameMode.QUIZ && (
+                        <div className="w-full h-full flex items-center justify-center">
+                            <div className="flex gap-4 md:gap-12 flex-wrap justify-center items-center w-full max-w-6xl">
+                                {quizOptions.map((item) => (
+                                    <div key={item.id} className="w-[28vw] md:w-[20vw] aspect-square max-w-[250px] relative">
+                                        <GameButton text={contentType === ContentType.ANIMALS ? '' : item.text} color={item.color} onClick={(e) => handleItemClick(item, e)} size="normal" showDots={displayStyle === 'alternate' && contentType === ContentType.NUMBERS} isFlat={contentType === ContentType.ANIMALS} />
+                                        {contentType === ContentType.ANIMALS && (<div className="absolute inset-0 pointer-events-none flex items-center justify-center"><img src={item.image} alt={item.text} className="w-[70%] h-[70%] object-contain" /></div>)}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
 
-              {gameMode === GameMode.MEMORY && (
-                <div className="w-full h-full flex flex-col items-center justify-center">
-                  {!isMemorySetup ? (
-                    <div className="bg-white p-8 rounded-[3rem] shadow-xl border w-full max-w-md flex flex-col gap-6 text-center">
-                      <h2 className="text-2xl font-black text-slate-700">Dificuldade</h2>
-                      <div className="grid grid-cols-2 gap-4">
-                        {[6, 8, 10, 15].map((d, i) => (
-                          <button key={d} onClick={() => startMemoryGame(d)} className="py-6 rounded-3xl text-xl font-black text-white shadow-lg active:scale-95 transition-all" style={{ backgroundColor: COLORS[i % COLORS.length] }}>{d} Pares</button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className={`grid w-full h-full gap-2 p-1 overflow-y-auto content-center ${memoryCards.length > 16 ? 'grid-cols-4' : 'grid-cols-3 md:grid-cols-4'}`}>
-                      {memoryCards.map(c => <MemoryCard key={c.id} item={c.item} isFlipped={c.isFlipped} isMatched={c.isMatched} onClick={() => handleMemoryClick(c.id)} />)}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+                    {gameMode === GameMode.MEMORY && (
+                        <div className="w-full h-full flex flex-col items-center justify-center">
+                            {!isMemorySetup ? (
+                                <div className="bg-white/80 backdrop-blur-md p-8 rounded-3xl shadow-xl flex flex-col items-center gap-6 animate-in fade-in zoom-in">
+                                    <h2 className="text-2xl font-bold text-slate-700">Escolha a Dificuldade</h2>
+                                    <div className="flex gap-4 flex-wrap justify-center">
+                                        <button onClick={() => startMemoryGame(6)} className="px-6 py-3 bg-green-400 text-white rounded-xl font-bold hover:scale-105 transition-transform shadow-green-200 shadow-lg">Fácil (6 Pares)</button>
+                                        <button onClick={() => startMemoryGame(8)} className="px-6 py-3 bg-blue-400 text-white rounded-xl font-bold hover:scale-105 transition-transform shadow-blue-200 shadow-lg">Médio (8 Pares)</button>
+                                        <button onClick={() => startMemoryGame(10)} className="px-6 py-3 bg-purple-400 text-white rounded-xl font-bold hover:scale-105 transition-transform shadow-purple-200 shadow-lg">Difícil (10 Pares)</button>
+                                        <button onClick={() => startMemoryGame(15)} className="px-6 py-3 bg-red-400 text-white rounded-xl font-bold hover:scale-105 transition-transform shadow-red-200 shadow-lg">Expert (15 Pares)</button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="w-full h-full flex flex-col items-center relative">
+                                    {isVictory && lastResult && (
+                                        <VictoryScreen 
+                                            result={lastResult} 
+                                            best={personalBest} 
+                                            onRetry={() => startMemoryGame(memoryDifficulty)} 
+                                            onSelectDifficulty={() => setIsMemorySetup(false)} 
+                                        />
+                                    )}
+                                    <div className="mb-2 flex flex-wrap justify-center items-center gap-3 shrink-0">
+                                        {/* Status Bar centralizada - agora sempre visível e única */}
+                                        <div className="flex items-center gap-3 bg-white/80 backdrop-blur-sm px-4 py-1.5 rounded-full border border-slate-200 shadow-sm text-xs md:text-sm font-bold">
+                                            <div className="flex items-center gap-1.5 text-slate-600 font-mono tracking-tighter"><Clock size={16} className="text-blue-400"/> {formatTime(memoryTime)}</div>
+                                            <div className="w-px h-4 bg-slate-300" />
+                                            <div className="flex items-center gap-1.5 text-red-500"><AlertCircle size={16} /> {memoryErrors}</div>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <button onClick={() => setIsMemorySetup(false)} className="px-4 py-1.5 bg-white/80 backdrop-blur-sm border border-slate-200 text-slate-500 rounded-full text-xs font-bold flex items-center gap-1 hover:bg-white transition-all shadow-sm active:scale-95"><Settings size={14}/> Mudar Nível</button>
+                                            <button onClick={() => startMemoryGame(memoryDifficulty)} className="px-4 py-1.5 bg-white/80 backdrop-blur-sm border border-slate-200 text-slate-500 rounded-full text-xs font-bold flex items-center gap-1 hover:bg-white transition-all shadow-sm active:scale-95"><RotateCcw size={14}/> Reiniciar</button>
+                                        </div>
+                                    </div>
+                                    <div className={`grid gap-1 md:gap-3 w-full h-full justify-items-center p-1 overflow-hidden transition-opacity duration-500 ${isVictory ? 'opacity-20 pointer-events-none grayscale' : 'opacity-100'} ${getMemoryGridClass(memoryCards.length / 2)}`}>
+                                        {memoryCards.map((card) => (
+                                            <div key={card.id} className="w-full h-full flex items-center justify-center min-h-0 min-w-0"><MemoryCard item={card.item} isFlipped={card.isFlipped} isMatched={card.isMatched} onClick={() => handleMemoryCardClick(card.id)} /></div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </>
+            )}
         </div>
       </main>
     </div>
   );
 };
 
-const SidebarBtn: React.FC<{ active: boolean, onClick: () => void, icon: any, label: string, color: string, disabled?: boolean }> = ({ active, onClick, icon, label, color, disabled }) => (
-  <button onClick={disabled ? undefined : onClick} className={`w-full flex items-center gap-4 px-4 py-3 rounded-2xl text-sm font-black transition-all ${disabled ? 'opacity-30' : active ? 'text-white shadow-lg scale-[1.02]' : 'text-slate-400 hover:bg-slate-50'}`} style={active ? { backgroundColor: color } : {}}>
-    {icon} <span>{label}</span>
+const VictoryScreen: React.FC<{ 
+    result: MemoryResult; 
+    best: number | null; 
+    onRetry: () => void; 
+    onSelectDifficulty: () => void;
+}> = ({ result, best, onRetry, onSelectDifficulty }) => {
+    const efficiency = calculateEfficiency(result.timeSeconds, result.errors, result.difficulty);
+    const isNewRecord = best === null || result.timeSeconds < best;
+
+    return (
+        <div className="absolute inset-0 z-[60] flex items-center justify-center p-4 md:p-8 animate-in zoom-in fade-in duration-300">
+            <div className="bg-white rounded-[2rem] shadow-2xl border-4 border-yellow-400 p-8 md:p-12 w-full max-w-lg text-center flex flex-col items-center gap-6 relative overflow-hidden">
+                {/* Decorative Elements */}
+                <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-pink-500 via-yellow-400 to-blue-500" />
+                
+                <div className="bg-yellow-100 p-6 rounded-full text-yellow-600 animate-bounce">
+                    <Trophy size={64} />
+                </div>
+
+                <div>
+                    <h2 className="text-4xl font-black text-slate-700 mb-2">Parabéns!</h2>
+                    <p className="text-slate-500 font-medium">Você completou o desafio de {result.difficulty} pares!</p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 w-full">
+                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest block mb-1">Tempo</span>
+                        <span className="text-2xl font-black text-slate-700 font-mono">
+                            {Math.floor(result.timeSeconds / 60)}:{(result.timeSeconds % 60).toString().padStart(2, '0')}
+                        </span>
+                    </div>
+                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest block mb-1">Erros</span>
+                        <span className="text-2xl font-black text-slate-700">{result.errors}</span>
+                    </div>
+                    <div className="col-span-2 bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-2xl border border-blue-100 flex items-center justify-between px-8">
+                        <div>
+                            <span className="text-xs font-bold text-blue-400 uppercase tracking-widest block text-left">Aproveitamento</span>
+                            <span className="text-3xl font-black text-blue-600">{efficiency}%</span>
+                        </div>
+                        {isNewRecord && (
+                            <div className="bg-yellow-400 text-white px-3 py-1 rounded-full text-xs font-black animate-pulse shadow-sm">
+                                NOVO RECORDE!
+                            </div>
+                        )}
+                        {!isNewRecord && best && (
+                            <div className="text-right">
+                                <span className="text-[10px] font-bold text-slate-400 block uppercase">Melhor Tempo</span>
+                                <span className="text-sm font-bold text-slate-500 font-mono">
+                                    {Math.floor(best / 60)}:{(best % 60).toString().padStart(2, '0')}
+                                </span>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                <div className="flex flex-col w-full gap-3 mt-4">
+                    <button 
+                        onClick={onRetry}
+                        className="w-full py-4 bg-blue-500 text-white rounded-2xl font-black text-xl shadow-lg shadow-blue-200 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3"
+                    >
+                        <RotateCcw size={24} /> Jogar Novamente
+                    </button>
+                    <button 
+                        onClick={onSelectDifficulty}
+                        className="w-full py-3 bg-slate-100 text-slate-500 rounded-2xl font-bold hover:bg-slate-200 transition-colors"
+                    >
+                        Trocar Nível
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const SidebarBtn: React.FC<{ active: boolean; onClick: () => void; icon: React.ReactNode; label: string; colorClass: string; disabled?: boolean; }> = ({ active, onClick, icon, label, colorClass, disabled = false }) => (
+  <button onClick={disabled ? undefined : onClick} disabled={disabled} className={`w-full flex items-center gap-4 px-4 py-4 rounded-2xl text-sm font-bold transition-all duration-200 ${disabled ? 'opacity-40 cursor-not-allowed bg-slate-50 text-slate-300' : ''} ${!disabled && active ? `${colorClass} text-white shadow-lg scale-105` : !disabled ? 'bg-slate-50 text-slate-400 hover:bg-slate-100 hover:text-slate-600 hover:scale-102' : ''}`}>
+    <div className={`${!disabled && active ? 'text-white' : disabled ? 'text-slate-300' : 'text-slate-400'}`}>{disabled ? <Lock size={20} /> : icon}</div>
+    <span className="tracking-wide">{label}</span>
   </button>
 );
 
