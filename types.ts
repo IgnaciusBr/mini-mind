@@ -30,8 +30,6 @@ export enum ContentType {
     createdAt: number;
   }
 
-  // --- Statistics Types ---
-  
   export interface MemoryResult {
     id: string;
     date: number; 
@@ -40,16 +38,11 @@ export enum ContentType {
     errors: number;
   }
 
-  export interface QuizStats {
-    correct: number;
-    wrong: number;
-  }
-
-  export type QuizHistory = Record<ContentType, QuizStats>;
+  export type QuizHistory = Record<ContentType, { correct: number, wrong: number }>;
   
   export const COLORS = [
-    '#FF5733', '#33FF57', '#3357FF', '#FF33A1', '#FFC300',
-    '#33FFF5', '#8E44AD', '#2ECC71', '#E67E22', '#E74C3C'
+    '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEEAD',
+    '#D4A5A5', '#9B59B6', '#3498DB', '#E67E22', '#F1C40F'
   ];
   
   export const PRONUNCIATION_MAP: Record<string, string> = {
@@ -60,5 +53,7 @@ export enum ContentType {
 
   export const ANIMAL_GENDER_MAP: Record<string, string> = {
     'ARANHA': 'a', 'CORUJA': 'a', 'FOCA': 'a', 'GIRAFA': 'a',
-    'OVELHA': 'a', 'PREGUIÇA': 'a', 'RAPOSA': 'a', 'VACA': 'a', 'ZEBRA': 'a'
+    'OVELHA': 'a', 'PREGUIÇA': 'a', 'RAPOSA': 'a', 'VACA': 'a', 
+    'ZEBRA': 'a', 'BALEIA': 'a', 'JOANINHA': 'a', 'ÁGUIA': 'a',
+    'GALINHA': 'a', 'FÊNIX': 'a'
   };
