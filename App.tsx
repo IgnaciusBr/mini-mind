@@ -18,8 +18,6 @@ import {
   Hash,
   Type,
   Volume2,
-  CaseUpper,
-  CaseLower,
   Mic,
   Cat,
   Grid,
@@ -30,7 +28,8 @@ import {
   Trophy,
   Loader2,
   RotateCcw,
-  Settings
+  Settings,
+  Calculator
 } from 'lucide-react';
 
 interface MemoryCardState {
@@ -46,17 +45,23 @@ const STORAGE_KEY_QUIZ = 'ab_quiz_history';
 
 type ViewState = 'GAME' | 'DASHBOARD';
 
-// Helper: Efficiency Calculation (shared with Dashboard)
-const calculateEfficiency = (time: number, errors: number, difficulty: number) => {
-    let timePerPair = 3;
-    if (difficulty === 8) timePerPair = 4;
-    else if (difficulty === 10) timePerPair = 5;
-    else if (difficulty === 15) timePerPair = 6;
-    const parTime = difficulty * timePerPair;
-    const timePenalty = Math.max(0, (time - parTime) / 2);
-    const errorPenalty = errors * 10;
-    const score = 100 - timePenalty - errorPenalty;
-    return Math.max(0, Math.round(score));
+// --- MATH LOGIC: Inverse Efficiency Model (Hyperbola) ---
+// S = K / (T + (E * P) + 1)
+const calculateScore = (time: number, errors: number, difficulty: number) => {
+    // K (Maximum Constant): Scales with difficulty to keep scores rewarding on harder levels.
+    // Example: 6 pairs = 60,000 max. 15 pairs = 150,000 max.
+    const K = difficulty * 10000;
+    
+    // P (Penalty): Weight of an error converted to seconds.
+    // A high penalty (10s) enforces the "rigorous" approach mentioned.
+    const P = 10;
+    
+    // Cost Function: Time + (Errors * Penalty)
+    // +1 prevents division by zero.
+    const cost = time + (errors * P) + 1;
+    
+    const score = Math.round(K / cost);
+    return score;
 };
 
 const App: React.FC = () => {
@@ -224,11 +229,17 @@ const App: React.FC = () => {
     const saved = localStorage.getItem(STORAGE_KEY_MEMORY);
     const results: MemoryResult[] = saved ? JSON.parse(saved) : [];
     
-    // Check for personal best
-    const previousBest = results
+    // Check for personal best based on Score (Higher is better now)
+    const currentScore = calculateScore(result.timeSeconds, result.errors, result.difficulty);
+    
+    const previousBestScore = results
         .filter(r => r.difficulty === memoryDifficulty)
-        .reduce((best, curr) => (!best || curr.timeSeconds < best) ? curr.timeSeconds : best, null as number | null);
-    setPersonalBest(previousBest);
+        .reduce((best, curr) => {
+            const score = calculateScore(curr.timeSeconds, curr.errors, curr.difficulty);
+            return (!best || score > best) ? score : best;
+        }, null as number | null);
+        
+    setPersonalBest(previousBestScore);
 
     results.push(result);
     localStorage.setItem(STORAGE_KEY_MEMORY, JSON.stringify(results));
@@ -475,7 +486,42 @@ const App: React.FC = () => {
           <div className="flex-1 flex justify-center items-center gap-4">
             <h1 className="text-xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 drop-shadow-sm truncate px-4 py-2">{getTitle()}</h1>
           </div>
-          <div className="w-12 md:hidden"></div>
+          <div className="w-auto flex justify-end">
+            {view === 'GAME' && gameMode !== GameMode.MEMORY && contentType !== ContentType.ANIMALS && (
+               <div 
+                   className="relative flex items-center bg-slate-100 rounded-full p-1 h-11 w-36 shadow-inner border border-slate-200 cursor-pointer"
+                   onClick={() => setDisplayStyle(prev => prev === 'standard' ? 'alternate' : 'standard')}
+               >
+                   {/* Sliding Indicator */}
+                   <div 
+                       className={`absolute top-1 bottom-1 w-[calc(50%-4px)] bg-white rounded-full shadow-sm border border-slate-100 transition-transform duration-300 ease-out ${
+                           displayStyle === 'alternate' ? 'translate-x-full left-1' : 'translate-x-0 left-1'
+                       }`}
+                   />
+
+                   {/* Option 1: Left */}
+                   <div className={`flex-1 z-10 flex items-center justify-center transition-colors duration-300 ${displayStyle === 'standard' ? 'text-blue-500 font-black' : 'text-slate-400 font-bold'}`}>
+                       <span className="text-sm tracking-wider">{contentType === ContentType.NUMBERS ? '123' : 'ABC'}</span>
+                   </div>
+
+                   {/* Center Divider */}
+                   <div className="z-0 w-px h-4 bg-slate-300/50" />
+
+                   {/* Option 2: Right */}
+                   <div className={`flex-1 z-10 flex items-center justify-center transition-colors duration-300 ${displayStyle === 'alternate' ? 'text-blue-500 font-black' : 'text-slate-400 font-bold'}`}>
+                       {contentType === ContentType.NUMBERS ? (
+                           <div className="flex gap-1">
+                               <div className={`w-1.5 h-1.5 rounded-full ${displayStyle === 'alternate' ? 'bg-blue-500' : 'bg-slate-400'}`} />
+                               <div className={`w-1.5 h-1.5 rounded-full ${displayStyle === 'alternate' ? 'bg-blue-500' : 'bg-slate-400'}`} />
+                               <div className={`w-1.5 h-1.5 rounded-full ${displayStyle === 'alternate' ? 'bg-blue-500' : 'bg-slate-400'}`} />
+                           </div>
+                       ) : (
+                           <span className="text-sm tracking-wider">abc</span>
+                       )}
+                   </div>
+               </div>
+            )}
+          </div>
         </header>
 
         <div className="flex-1 overflow-hidden relative p-2 md:p-4 flex flex-col items-center justify-center min-h-0">
@@ -585,8 +631,10 @@ const VictoryScreen: React.FC<{
     onRetry: () => void; 
     onSelectDifficulty: () => void;
 }> = ({ result, best, onRetry, onSelectDifficulty }) => {
-    const efficiency = calculateEfficiency(result.timeSeconds, result.errors, result.difficulty);
-    const isNewRecord = best === null || result.timeSeconds < best;
+    // New Calculation
+    const score = calculateScore(result.timeSeconds, result.errors, result.difficulty);
+    // Best score logic: Null means no previous best. If we have a previous best, we compare.
+    const isNewRecord = best === null || score > best; 
 
     return (
         <div className="absolute inset-0 z-[60] flex items-center justify-center p-4 md:p-8 animate-in zoom-in fade-in duration-300">
@@ -616,8 +664,11 @@ const VictoryScreen: React.FC<{
                     </div>
                     <div className="col-span-2 bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-2xl border border-blue-100 flex items-center justify-between px-8">
                         <div>
-                            <span className="text-xs font-bold text-blue-400 uppercase tracking-widest block text-left">Aproveitamento</span>
-                            <span className="text-3xl font-black text-blue-600">{efficiency}%</span>
+                            <div className="flex items-center gap-1.5 mb-0.5">
+                                <Calculator size={14} className="text-blue-400" />
+                                <span className="text-xs font-bold text-blue-400 uppercase tracking-widest block text-left">Pontuação</span>
+                            </div>
+                            <span className="text-4xl font-black text-blue-600 tracking-tight">{score.toLocaleString()}</span>
                         </div>
                         {isNewRecord && (
                             <div className="bg-yellow-400 text-white px-3 py-1 rounded-full text-xs font-black animate-pulse shadow-sm">
@@ -626,9 +677,9 @@ const VictoryScreen: React.FC<{
                         )}
                         {!isNewRecord && best && (
                             <div className="text-right">
-                                <span className="text-[10px] font-bold text-slate-400 block uppercase">Melhor Tempo</span>
-                                <span className="text-sm font-bold text-slate-500 font-mono">
-                                    {Math.floor(best / 60)}:{(best % 60).toString().padStart(2, '0')}
+                                <span className="text-[10px] font-bold text-slate-400 block uppercase">Melhor</span>
+                                <span className="text-lg font-bold text-slate-500 font-mono">
+                                    {best.toLocaleString()}
                                 </span>
                             </div>
                         )}

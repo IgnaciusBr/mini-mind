@@ -1,6 +1,7 @@
+
 import React, { useEffect, useState } from 'react';
 import { MemoryResult, QuizHistory, ContentType } from '../types';
-import { Trophy, Clock, AlertCircle, BarChart2, Calendar, Brain, List, Activity, TrendingUp } from 'lucide-react';
+import { Trophy, Clock, AlertCircle, BarChart2, Calendar, Brain, List, Activity, TrendingUp, Calculator } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
   const [memoryResults, setMemoryResults] = useState<MemoryResult[]>([]);
@@ -184,13 +185,13 @@ export const Dashboard: React.FC = () => {
                                     <th className="px-6 py-4 font-bold">Data</th>
                                     <th className="px-6 py-4 font-bold text-center">Tempo</th>
                                     <th className="px-6 py-4 font-bold text-center">Erros</th>
-                                    <th className="px-6 py-4 font-bold text-center">Eficiência</th>
+                                    <th className="px-6 py-4 font-bold text-center">Pontuação</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {/* Reverse for table to show newest first */}
                                 {[...filteredMemoryResults].reverse().map((result) => {
-                                    const score = calculateEfficiency(result.timeSeconds, result.errors, result.difficulty);
+                                    const score = calculateScore(result.timeSeconds, result.errors, result.difficulty);
                                     return (
                                         <tr key={result.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
                                             <td className="px-6 py-4 flex items-center gap-2">
@@ -206,7 +207,7 @@ export const Dashboard: React.FC = () => {
                                                 </span>
                                             </td>
                                             <td className="px-6 py-4 text-center">
-                                                <span className="font-bold text-orange-500">{score}%</span>
+                                                <span className="font-bold text-blue-600 font-mono text-base">{score.toLocaleString()}</span>
                                             </td>
                                         </tr>
                                     );
@@ -228,24 +229,18 @@ export const Dashboard: React.FC = () => {
   );
 };
 
-// --- Helper: Efficiency Calculation ---
-const calculateEfficiency = (time: number, errors: number, difficulty: number) => {
-    // 3s para 6 pares, 4s para 8, 5s para 10 e 6s para 15
-    let timePerPair = 3;
-    if (difficulty === 8) timePerPair = 4;
-    else if (difficulty === 10) timePerPair = 5;
-    else if (difficulty === 15) timePerPair = 6;
-
-    const parTime = difficulty * timePerPair;
+// --- MATH LOGIC: Inverse Efficiency Model (Hyperbola) ---
+// S = K / (T + (E * P) + 1)
+const calculateScore = (time: number, errors: number, difficulty: number) => {
+    // K (Maximum Constant): Scales with difficulty.
+    const K = difficulty * 10000;
     
-    // Penalidade de tempo: Se exceder o par, perde 1 ponto a cada 2s extras
-    const timePenalty = Math.max(0, (time - parTime) / 2);
+    // P (Penalty): 10 seconds per error.
+    const P = 10;
     
-    // Penalidade de erro: 10 pontos por erro
-    const errorPenalty = errors * 10;
-    
-    const score = 100 - timePenalty - errorPenalty;
-    return Math.max(0, Math.round(score));
+    const cost = time + (errors * P) + 1;
+    const score = Math.round(K / cost);
+    return score;
 };
 
 // --- Sub-Component: Custom SVG Chart ---
@@ -265,108 +260,146 @@ const PerformanceChart: React.FC<{ data: MemoryResult[], difficulty: number }> =
     // Dimensions
     const width = 100; // viewBox units
     const height = 100; 
-    const padding = 10;
+    const padding = 12;
     const graphWidth = width - (padding * 2);
     const graphHeight = height - (padding * 2);
 
-    // Scales
-    const maxTime = Math.max(...chartData.map(d => d.timeSeconds), difficulty * 10); // Ensure minimal scale
-    const maxErrors = Math.max(...chartData.map(d => d.errors), 5); // Ensure minimal scale
+    // Dynamic Scales based on data
+    const maxTime = Math.max(...chartData.map(d => d.timeSeconds), 30); 
+    const maxErrors = Math.max(...chartData.map(d => d.errors), 5);
     
+    // Calculate Max Score dynamically to scale Y axis correctly
+    const scores = chartData.map(d => calculateScore(d.timeSeconds, d.errors, difficulty));
+    const maxScore = Math.max(...scores, 1000); 
+
     // X Scale: index based
     const stepX = graphWidth / (chartData.length - 1 || 1);
+    
+    // Bar Widths (Visual)
+    const barW = Math.min(stepX * 0.3, 3); // Max width 3 units to prevent looking too chunky
+    const halfBarW = barW / 2;
 
     return (
         <div className="w-full h-full flex flex-col">
-            <div className="flex items-center justify-between mb-2 text-xs font-bold px-4">
-                 <div className="flex items-center gap-2">
-                    <span className="w-3 h-3 bg-blue-400 rounded-sm"></span> Tempo (s)
-                    <span className="w-3 h-3 bg-red-400 rounded-sm"></span> Erros
+            <div className="flex items-center justify-between mb-4 text-xs font-bold px-4">
+                 <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                        <span className="w-3 h-3 bg-gradient-to-b from-blue-400 to-blue-600 rounded-sm shadow-sm"></span>
+                        <span className="text-blue-600">Tempo (s)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                         <span className="w-3 h-3 bg-gradient-to-b from-rose-400 to-rose-600 rounded-sm shadow-sm"></span>
+                         <span className="text-rose-600">Erros</span>
+                    </div>
                  </div>
-                 <div className="flex items-center gap-2 text-yellow-600">
-                    <TrendingUp size={14} /> Aproveitamento (%)
+                 <div className="flex items-center gap-2 text-amber-600 bg-amber-50 px-2 py-1 rounded-lg border border-amber-100">
+                    <TrendingUp size={14} /> Pontuação (Pts)
                  </div>
             </div>
 
-            {/* Added extra padding on sides (px-12) to prevent labels from being cut off */}
-            <div className="relative flex-1 w-full border-l border-b border-slate-200 px-10 md:px-12">
+            <div className="relative flex-1 w-full border-l border-b border-slate-200 px-10 md:px-12 pb-4">
                 {/* Y Axis Labels (Left - Time) */}
-                <div className="absolute left-0 top-0 bottom-0 flex flex-col justify-between text-[10px] text-slate-400 py-2 text-right w-8">
+                <div className="absolute left-0 top-0 bottom-4 flex flex-col justify-between text-[10px] text-blue-400 py-2 text-right w-8 font-bold">
                     <span>{Math.round(maxTime)}s</span>
                     <span>{Math.round(maxTime / 2)}s</span>
                     <span>0s</span>
                 </div>
                 
-                {/* Y Axis Labels (Right - Errors) */}
-                 <div className="absolute right-0 top-0 bottom-0 flex flex-col justify-between text-[10px] text-slate-400 py-2 text-left w-8">
-                    <span>{maxErrors}E</span>
-                    <span>{Math.round(maxErrors / 2)}E</span>
-                    <span>0E</span>
+                {/* Y Axis Labels (Right - Score) */}
+                 <div className="absolute right-0 top-0 bottom-4 flex flex-col justify-between text-[10px] text-amber-600 py-2 text-left w-8 font-bold">
+                    <span>{Math.round(maxScore/1000)}k</span>
+                    <span>{Math.round(maxScore/2000)}k</span>
+                    <span>0</span>
                 </div>
 
                 <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible" preserveAspectRatio="none">
-                    
+                    <defs>
+                        <linearGradient id="timeGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#60A5FA" />
+                            <stop offset="100%" stopColor="#3B82F6" />
+                        </linearGradient>
+                        <linearGradient id="errorGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#FB7185" />
+                            <stop offset="100%" stopColor="#E11D48" />
+                        </linearGradient>
+                         <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+                            <feDropShadow dx="0" dy="1" stdDeviation="1" floodColor="#000000" floodOpacity="0.2"/>
+                        </filter>
+                    </defs>
+
                     {/* Grid Lines */}
-                    <line x1={padding} y1={padding} x2={width-padding} y2={padding} stroke="#f1f5f9" strokeWidth="0.5" />
-                    <line x1={padding} y1={height/2} x2={width-padding} y2={height/2} stroke="#f1f5f9" strokeWidth="0.5" />
+                    <line x1={padding} y1={padding} x2={width-padding} y2={padding} stroke="#E2E8F0" strokeWidth="0.5" strokeDasharray="2" />
+                    <line x1={padding} y1={height/2} x2={width-padding} y2={height/2} stroke="#E2E8F0" strokeWidth="0.5" strokeDasharray="2" />
 
                     {chartData.map((d, i) => {
                         const x = padding + (i * stepX);
                         
                         // Calculate Heights (Inverted Y)
-                        // Graph Y starts at padding, ends at height-padding. 
-                        // Value 0 is at height-padding. Value Max is at padding.
-                        
                         const timeH = (d.timeSeconds / maxTime) * graphHeight;
                         const errorH = (d.errors / maxErrors) * graphHeight;
                         
-                        const efficiency = calculateEfficiency(d.timeSeconds, d.errors, difficulty);
-                        const scoreY = (height - padding) - ((efficiency / 100) * graphHeight);
+                        const score = calculateScore(d.timeSeconds, d.errors, difficulty);
+                        const scoreY = (height - padding) - ((score / maxScore) * graphHeight);
 
                         // Previous point for line
                         const prevD = i > 0 ? chartData[i-1] : null;
                         const prevX = i > 0 ? padding + ((i-1) * stepX) : x;
-                        const prevScoreY = prevD ? (height - padding) - ((calculateEfficiency(prevD.timeSeconds, prevD.errors, difficulty) / 100) * graphHeight) : scoreY;
+                        
+                        let prevScoreY = scoreY;
+                        if (prevD) {
+                            const prevScore = calculateScore(prevD.timeSeconds, prevD.errors, difficulty);
+                            prevScoreY = (height - padding) - ((prevScore / maxScore) * graphHeight);
+                        }
 
                         return (
                             <g key={d.id} className="group">
-                                {/* Time Bar (Blue) - Width fixed slightly */}
+                                {/* Time Bar (Blue Gradient) - Placed to the left of center */}
                                 <rect 
-                                    x={x - 1} 
+                                    x={x - barW - 0.5} 
                                     y={(height - padding) - timeH} 
-                                    width="2" 
+                                    width={barW} 
                                     height={timeH} 
-                                    fill="#60A5FA" 
-                                    opacity="0.6"
-                                    className="transition-all hover:opacity-100"
+                                    fill="url(#timeGradient)" 
+                                    rx="1"
+                                    className="transition-all duration-300 hover:opacity-80"
                                 />
                                 
-                                {/* Error Bar (Red) - Offset slightly right */}
+                                {/* Error Bar (Red Gradient) - Placed to the right of center */}
                                 <rect 
-                                    x={x + 1} 
+                                    x={x + 0.5} 
                                     y={(height - padding) - errorH} 
-                                    width="2" 
+                                    width={barW} 
                                     height={errorH} 
-                                    fill="#F87171" 
-                                    opacity="0.8"
-                                    className="transition-all hover:opacity-100"
+                                    fill="url(#errorGradient)" 
+                                    rx="1"
+                                    className="transition-all duration-300 hover:opacity-80"
                                 />
 
-                                {/* Efficiency Line Segment */}
+                                {/* Score Line Segment */}
                                 {i > 0 && (
                                     <line 
                                         x1={prevX} y1={prevScoreY} 
                                         x2={x} y2={scoreY} 
-                                        stroke="#CA8A04" 
-                                        strokeWidth="0.5" 
+                                        stroke="#D97706" 
+                                        strokeWidth="1.5" 
+                                        strokeLinecap="round"
+                                        filter="url(#shadow)"
                                     />
                                 )}
-                                {/* Efficiency Point */}
-                                <circle cx={x} cy={scoreY} r="1.5" fill="#EAB308" stroke="white" strokeWidth="0.2" />
+                                {/* Score Point */}
+                                <circle 
+                                    cx={x} 
+                                    cy={scoreY} 
+                                    r="2.5" 
+                                    fill="#F59E0B" 
+                                    stroke="white" 
+                                    strokeWidth="1" 
+                                    className="drop-shadow-md transition-all duration-300 group-hover:r-4" 
+                                />
 
                                 {/* Tooltip Area (Invisible rect for hover) */}
-                                <rect x={x - 2} y={padding} width="4" height={graphHeight} fill="transparent">
-                                    <title>{`Rodada ${i+1}\nTempo: ${d.timeSeconds}s\nErros: ${d.errors}\nAproveitamento: ${efficiency}%`}</title>
+                                <rect x={x - barW - 2} y={padding} width={(barW * 2) + 4} height={graphHeight} fill="transparent" className="cursor-pointer">
+                                    <title>{`Rodada ${i+1}\nPontuação: ${score}\nTempo: ${d.timeSeconds}s\nErros: ${d.errors}`}</title>
                                 </rect>
                             </g>
                         );
@@ -374,7 +407,7 @@ const PerformanceChart: React.FC<{ data: MemoryResult[], difficulty: number }> =
                 </svg>
                 
                 {/* X Axis Label */}
-                <div className="absolute bottom-0 left-0 right-0 text-center text-[10px] text-slate-400">
+                <div className="absolute bottom-0 left-0 right-0 text-center text-[10px] text-slate-400 font-medium">
                     Histórico de Partidas (Antigo → Recente)
                 </div>
             </div>
