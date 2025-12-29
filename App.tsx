@@ -40,7 +40,8 @@ import {
   Home,
   ArrowLeft,
   ArrowRight,
-  Pencil // Added Pencil Icon
+  Pencil,
+  Smartphone
 } from 'lucide-react';
 
 interface MemoryCardState {
@@ -62,6 +63,41 @@ const calculateScore = (time: number, errors: number, difficulty: number) => {
     return score;
 };
 
+// --- Orientation Guard Component ---
+const OrientationGuard: React.FC<{ allowed: boolean }> = ({ allowed }) => {
+    const [showBlocker, setShowBlocker] = useState(false);
+
+    useEffect(() => {
+        const checkOrientation = () => {
+            const isLandscape = window.matchMedia("(orientation: landscape)").matches;
+            // On mobile devices (width < 768), block landscape unless allowed
+            const isMobile = window.innerWidth < 768 || window.innerHeight < 500;
+            
+            if (isMobile && isLandscape && !allowed) {
+                setShowBlocker(true);
+            } else {
+                setShowBlocker(false);
+            }
+        };
+
+        checkOrientation();
+        window.addEventListener('resize', checkOrientation);
+        return () => window.removeEventListener('resize', checkOrientation);
+    }, [allowed]);
+
+    if (!showBlocker) return null;
+
+    return (
+        <div className="fixed inset-0 z-[100] bg-slate-800 flex flex-col items-center justify-center text-white p-8 text-center animate-in fade-in">
+            <div className="animate-spin mb-6 text-blue-400">
+                <Smartphone size={64} strokeWidth={1.5} className="rotate-90" />
+            </div>
+            <h2 className="text-2xl font-black mb-2">Ops! Gire o celular</h2>
+            <p className="text-slate-300 font-medium">Este jogo funciona melhor com o celular em pé (na vertical).</p>
+        </div>
+    );
+};
+
 const App: React.FC = () => {
   // --- Auth State ---
   const [user, setUser] = useState<User | null>(null);
@@ -79,6 +115,9 @@ const App: React.FC = () => {
   const [gameMode, setGameMode] = useState<GameMode>(GameMode.EXPLORE);
   const [items, setItems] = useState<GameItem[]>([]);
   const [displayStyle, setDisplayStyle] = useState<'standard' | 'alternate'>('standard');
+  
+  // --- Orientation State ---
+  const [allowLandscape, setAllowLandscape] = useState(false);
   
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const [quizTarget, setQuizTarget] = useState<GameItem | null>(null);
@@ -591,8 +630,6 @@ const App: React.FC = () => {
   };
   
   // Logic to determine if Toggle (ABC/abc) should be shown
-  // Show if: View is Game AND (Explore Mode OR (Tracing Mode AND Not Numbers))
-  // Hide if: Memory Mode OR Animals OR (Tracing Mode AND Numbers)
   const showToggle = view === 'GAME' 
     && contentType !== ContentType.ANIMALS 
     && gameMode !== GameMode.MEMORY
@@ -676,6 +713,9 @@ const App: React.FC = () => {
     <div className="relative w-screen h-screen overflow-hidden flex flex-col text-slate-700 bg-transparent pb-safe">
       <Confetti ref={confettiRef} />
       
+      {/* Protect Orientation */}
+      <OrientationGuard allowed={allowLandscape} />
+
       {/* Sidebar - Only visible in GAME mode */}
       {view === 'GAME' && (
         <>
@@ -925,7 +965,7 @@ const App: React.FC = () => {
                 </div>
             )}
 
-            {view === 'DASHBOARD' && <Dashboard />}
+            {view === 'DASHBOARD' && <Dashboard onRequestLandscape={setAllowLandscape} />}
 
             {view === 'GAME' && (
                 <>
