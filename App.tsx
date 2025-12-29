@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { ContentType, GameMode, COLORS, GameItem, PRONUNCIATION_MAP, MemoryResult, QuizHistory, QuizStats, UserProfile } from './types';
 import { useSpeech } from './hooks/useSpeech';
@@ -10,7 +9,7 @@ import { Dashboard } from './components/Dashboard';
 import { AuthScreen } from './components/AuthScreen';
 import { db, auth } from './firebase';
 import { collection, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
-import { onAuthStateChanged, signOut, User } from 'firebase/auth';
+import { onAuthStateChanged, signOut, User, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { 
   Menu, 
   X,
@@ -104,20 +103,31 @@ const App: React.FC = () => {
 
   // --- Auth & Initial Data Loading ---
   useEffect(() => {
+    // Configurar persistência local explícita
+    setPersistence(auth, browserLocalPersistence).catch(console.error);
+
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+        console.log("Estado de Autenticação Alterado:", currentUser ? "Logado" : "Não Logado");
         setUser(currentUser);
+        
         if (currentUser) {
-            // Fetch Profile
-            const docRef = doc(db, "users", currentUser.uid);
-            const docSnap = await getDoc(docRef);
-            
-            if (docSnap.exists()) {
-                setUserProfile(docSnap.data() as UserProfile);
-                setIsCompletingProfile(false);
-            } else {
-                // Profile doesn't exist (likely Google Login for first time)
-                setUserProfile(null);
-                setIsCompletingProfile(true);
+            try {
+                // Fetch Profile
+                const docRef = doc(db, "users", currentUser.uid);
+                const docSnap = await getDoc(docRef);
+                
+                if (docSnap.exists()) {
+                    setUserProfile(docSnap.data() as UserProfile);
+                    setIsCompletingProfile(false);
+                } else {
+                    // Profile doesn't exist (likely Google Login for first time)
+                    setUserProfile(null);
+                    setIsCompletingProfile(true);
+                }
+            } catch (error) {
+                console.error("Erro ao buscar perfil:", error);
+                // Se houver erro de permissão no perfil, forçar logout para evitar estado inconsistente
+                await signOut(auth);
             }
         } else {
             setUserProfile(null);
@@ -153,10 +163,15 @@ const App: React.FC = () => {
         await Promise.all(promises);
       } catch (error) {
         console.error("Erro ao carregar dados do Firebase:", error);
+        // CRITICAL FIX: Se der erro ao carregar dados (ex: permissão negada), 
+        // força o logout para garantir que a tela de login apareça.
+        await signOut(auth);
       } finally {
         setTimeout(() => setIsLoadingAssets(false), 500);
       }
     };
+    
+    // Inicia carregamento de dados independentemente do Auth, mas o Auth controla o acesso
     initializeData();
 
     return () => unsubscribe();
@@ -237,6 +252,8 @@ const App: React.FC = () => {
     try {
         await signOut(auth);
         setView('GAME');
+        // Force reload to clear any internal states
+        window.location.reload();
     } catch (error) {
         console.error("Error signing out", error);
     }
@@ -305,8 +322,7 @@ const App: React.FC = () => {
   const getSpeakableText = (item: GameItem) => item.spokenText || item.text;
   const getArticle = (item: GameItem) => item.gender === 'f' ? 'a' : 'o';
 
-  // --- Game Control Functions (startMemoryGame, handleMemoryCardClick, etc.) ---
-  // (Copied strictly from previous valid implementation, keeping logic identical)
+  // --- Game Control Functions ---
   const startMemoryGame = (pairCount: number) => {
     if (memoryPreviewTimeoutRef.current) clearTimeout(memoryPreviewTimeoutRef.current);
     let sourceItems = contentType === ContentType.ANIMALS ? dbAnimals : items;
@@ -497,15 +513,26 @@ const App: React.FC = () => {
                 <p className="text-xl font-bold text-slate-500 animate-pulse">
                     {authLoading ? 'Verificando usuário...' : 'Preparando a diversão...'}
                 </p>
+                {/* Fallback button if loader gets stuck due to network/auth issues */}
+                {authLoading && (
+                     <button 
+                        onClick={() => window.location.reload()} 
+                        className="mt-4 text-xs font-bold text-slate-400 underline hover:text-slate-600"
+                    >
+                        Demorando muito? Recarregar
+                    </button>
+                )}
             </div>
         </div>
     );
   }
 
+  // Se não tem usuário logado, mostra Login
   if (!user) {
-      return <AuthScreen onLoginSuccess={() => {}} />;
+      return <AuthScreen onLoginSuccess={() => setAuthLoading(false)} />;
   }
 
+  // Se tem usuário mas não tem perfil, mostra completamento de perfil
   if (isCompletingProfile) {
       return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-50 p-4">
@@ -537,6 +564,9 @@ const App: React.FC = () => {
                     </div>
                     <button type="submit" className="w-full py-4 bg-green-500 text-white rounded-2xl font-black text-lg shadow-lg shadow-green-200 hover:scale-[1.02] active:scale-95 transition-all mt-4 flex items-center justify-center gap-2">
                         <CheckCircle2 /> Concluir
+                    </button>
+                    <button type="button" onClick={handleLogout} className="w-full py-2 text-slate-400 font-bold text-sm hover:text-slate-600">
+                        Cancelar e Sair
                     </button>
                   </form>
               </div>
