@@ -37,6 +37,14 @@ export enum ContentType {
     wrong: number;
   }
 
+  export interface UserProfile {
+    uid: string;
+    childName: string;
+    age: string;
+    parentEmail: string;
+    createdAt: number;
+  }
+
   // Map ContentType to Stats
   export type QuizHistory = Record<ContentType, QuizStats>;
   

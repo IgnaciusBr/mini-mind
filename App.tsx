@@ -1,14 +1,16 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { ContentType, GameMode, COLORS, GameItem, PRONUNCIATION_MAP, MemoryResult, QuizHistory, QuizStats } from './types';
+import { ContentType, GameMode, COLORS, GameItem, PRONUNCIATION_MAP, MemoryResult, QuizHistory, QuizStats, UserProfile } from './types';
 import { useSpeech } from './hooks/useSpeech';
 import Confetti, { ConfettiHandle } from './components/Confetti';
 import { GameButton } from './components/GameButton';
 import { MemoryCard } from './components/MemoryCard';
 import { Logo } from './components/Logo';
 import { Dashboard } from './components/Dashboard';
-import { db } from './firebase';
-import { collection, getDocs } from 'firebase/firestore';
+import { AuthScreen } from './components/AuthScreen';
+import { db, auth } from './firebase';
+import { collection, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
+import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { 
   Menu, 
   X,
@@ -29,7 +31,10 @@ import {
   Loader2,
   RotateCcw,
   Settings,
-  Calculator
+  Calculator,
+  LogOut,
+  User as UserIcon,
+  CheckCircle2
 } from 'lucide-react';
 
 interface MemoryCardState {
@@ -46,28 +51,25 @@ const STORAGE_KEY_QUIZ = 'ab_quiz_history';
 type ViewState = 'GAME' | 'DASHBOARD';
 
 // --- MATH LOGIC: Inverse Efficiency Model (Hyperbola) ---
-// S = K / (T + (E * P) + 1)
 const calculateScore = (time: number, errors: number, difficulty: number) => {
-    // K (Maximum Constant): Scales with difficulty to keep scores rewarding on harder levels.
-    // Example: 6 pairs = 60,000 max. 15 pairs = 150,000 max.
     const K = difficulty * 10000;
-    
-    // P (Penalty): Weight of an error converted to seconds.
-    // A high penalty (10s) enforces the "rigorous" approach mentioned.
     const P = 10;
-    
-    // Cost Function: Time + (Errors * Penalty)
-    // +1 prevents division by zero.
     const cost = time + (errors * P) + 1;
-    
     const score = Math.round(K / cost);
     return score;
 };
 
 const App: React.FC = () => {
+  // --- Auth State ---
+  const [user, setUser] = useState<User | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [profileCompletionData, setProfileCompletionData] = useState({ name: '', age: '' });
+  const [isCompletingProfile, setIsCompletingProfile] = useState(false);
+
+  // --- Game State ---
   const [isLoadingAssets, setIsLoadingAssets] = useState(true);
   const [dbAnimals, setDbAnimals] = useState<GameItem[]>([]);
-
   const [view, setView] = useState<ViewState>('GAME');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [contentType, setContentType] = useState<ContentType>(ContentType.NUMBERS);
@@ -100,7 +102,29 @@ const App: React.FC = () => {
   const memoryTimerRef = useRef<any>(null);
   const memoryPreviewTimeoutRef = useRef<any>(null);
 
+  // --- Auth & Initial Data Loading ---
   useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+        setUser(currentUser);
+        if (currentUser) {
+            // Fetch Profile
+            const docRef = doc(db, "users", currentUser.uid);
+            const docSnap = await getDoc(docRef);
+            
+            if (docSnap.exists()) {
+                setUserProfile(docSnap.data() as UserProfile);
+                setIsCompletingProfile(false);
+            } else {
+                // Profile doesn't exist (likely Google Login for first time)
+                setUserProfile(null);
+                setIsCompletingProfile(true);
+            }
+        } else {
+            setUserProfile(null);
+        }
+        setAuthLoading(false);
+    });
+
     const initializeData = async () => {
       try {
         const querySnapshot = await getDocs(collection(db, "animals"));
@@ -134,6 +158,8 @@ const App: React.FC = () => {
       }
     };
     initializeData();
+
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -176,6 +202,7 @@ const App: React.FC = () => {
     setItems(newItems);
   }, [contentType, displayStyle, dbAnimals]);
 
+  // ... (Other useEffects for game logic remain the same) ...
   useEffect(() => {
     if (flashcardIntervalRef.current) clearInterval(flashcardIntervalRef.current);
     if (memoryTimerRef.current) clearInterval(memoryTimerRef.current);
@@ -206,6 +233,35 @@ const App: React.FC = () => {
     return () => clearInterval(memoryTimerRef.current);
   }, [isMemoryTimerActive]);
 
+  const handleLogout = async () => {
+    try {
+        await signOut(auth);
+        setView('GAME');
+    } catch (error) {
+        console.error("Error signing out", error);
+    }
+  };
+
+  const handleCompleteProfile = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!user || !profileCompletionData.name || !profileCompletionData.age) return;
+
+      try {
+          const profile: UserProfile = {
+              uid: user.uid,
+              childName: profileCompletionData.name,
+              age: profileCompletionData.age,
+              parentEmail: user.email || '',
+              createdAt: Date.now()
+          };
+          await setDoc(doc(db, "users", user.uid), profile);
+          setUserProfile(profile);
+          setIsCompletingProfile(false);
+      } catch (err) {
+          console.error("Error creating profile", err);
+      }
+  };
+
   const saveQuizStats = (isCorrect: boolean) => {
     setQuizSessionStats(prev => ({
         correct: prev.correct + (isCorrect ? 1 : 0),
@@ -229,9 +285,8 @@ const App: React.FC = () => {
     const saved = localStorage.getItem(STORAGE_KEY_MEMORY);
     const results: MemoryResult[] = saved ? JSON.parse(saved) : [];
     
-    // Check for personal best based on Score (Higher is better now)
+    // Check for personal best
     const currentScore = calculateScore(result.timeSeconds, result.errors, result.difficulty);
-    
     const previousBestScore = results
         .filter(r => r.difficulty === memoryDifficulty)
         .reduce((best, curr) => {
@@ -250,6 +305,8 @@ const App: React.FC = () => {
   const getSpeakableText = (item: GameItem) => item.spokenText || item.text;
   const getArticle = (item: GameItem) => item.gender === 'f' ? 'a' : 'o';
 
+  // --- Game Control Functions (startMemoryGame, handleMemoryCardClick, etc.) ---
+  // (Copied strictly from previous valid implementation, keeping logic identical)
   const startMemoryGame = (pairCount: number) => {
     if (memoryPreviewTimeoutRef.current) clearTimeout(memoryPreviewTimeoutRef.current);
     let sourceItems = contentType === ContentType.ANIMALS ? dbAnimals : items;
@@ -398,6 +455,8 @@ const App: React.FC = () => {
   };
 
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
+  
+  // Helpers
   const getTitle = () => {
     if (view === 'DASHBOARD') return "Dashboard";
     if (gameMode === GameMode.MEMORY) return isVictory ? "Vitória!" : "Jogo da Memória";
@@ -405,20 +464,17 @@ const App: React.FC = () => {
     if (gameMode === GameMode.FLASHCARD) return "Observe";
     return "Toque para Aprender";
   };
-
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
-
   const getGridClass = () => {
     if (contentType === ContentType.ANIMALS) return 'grid-cols-3 grid-rows-5 md:grid-cols-5 md:grid-rows-3 gap-2 md:gap-3 p-2 h-full';
     if (contentType === ContentType.ALPHABET) return 'grid-cols-4 grid-rows-7 md:grid-cols-7 md:grid-rows-4 gap-2 md:gap-3 p-2 h-full';
     if (contentType === ContentType.NUMBERS) return 'grid-cols-2 grid-rows-5 md:grid-cols-5 md:grid-rows-2 gap-3 p-4 h-full';
     return 'grid-cols-2 grid-rows-3 md:grid-cols-5 md:grid-rows-1 gap-4 md:gap-8 p-8 h-full';
   };
-
   const getMemoryGridClass = (pairCount: number) => {
       const totalCards = pairCount * 2;
       if (totalCards === 12) return 'grid-cols-3 grid-rows-4 md:grid-cols-4 md:grid-rows-3';
@@ -428,7 +484,9 @@ const App: React.FC = () => {
       return 'grid-cols-4 grid-rows-4 md:grid-cols-6 md:grid-rows-4';
   };
 
-  if (isLoadingAssets) {
+  // --- Render Conditions ---
+
+  if (authLoading || isLoadingAssets) {
     return (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-50">
             <div className="animate-bounce mb-8">
@@ -436,20 +494,82 @@ const App: React.FC = () => {
             </div>
             <div className="flex flex-col items-center gap-4">
                 <Loader2 className="animate-spin text-blue-500" size={48} />
-                <p className="text-xl font-bold text-slate-500 animate-pulse">Preparando a diversão...</p>
+                <p className="text-xl font-bold text-slate-500 animate-pulse">
+                    {authLoading ? 'Verificando usuário...' : 'Preparando a diversão...'}
+                </p>
             </div>
         </div>
     );
   }
 
+  if (!user) {
+      return <AuthScreen onLoginSuccess={() => {}} />;
+  }
+
+  if (isCompletingProfile) {
+      return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-50 p-4">
+              <div className="bg-white rounded-[2rem] shadow-2xl p-8 md:p-12 w-full max-w-md animate-in zoom-in">
+                  <h2 className="text-3xl font-black text-slate-700 mb-2 text-center">Quase lá!</h2>
+                  <p className="text-slate-500 text-center mb-8 font-medium">Precisamos saber quem vai brincar.</p>
+                  <form onSubmit={handleCompleteProfile} className="space-y-4">
+                    <div className="space-y-1">
+                        <label className="text-xs font-bold text-slate-500 ml-3 uppercase">Nome da Criança</label>
+                        <input 
+                            type="text" 
+                            required
+                            placeholder="Ex: Ana"
+                            className="w-full px-5 py-3 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:outline-none focus:border-blue-400 font-bold text-slate-600"
+                            value={profileCompletionData.name}
+                            onChange={e => setProfileCompletionData(p => ({...p, name: e.target.value}))}
+                        />
+                    </div>
+                    <div className="space-y-1">
+                        <label className="text-xs font-bold text-slate-500 ml-3 uppercase">Idade</label>
+                        <input 
+                            type="number" 
+                            required
+                            placeholder="Anos"
+                            className="w-full px-5 py-3 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:outline-none focus:border-blue-400 font-bold text-slate-600"
+                            value={profileCompletionData.age}
+                            onChange={e => setProfileCompletionData(p => ({...p, age: e.target.value}))}
+                        />
+                    </div>
+                    <button type="submit" className="w-full py-4 bg-green-500 text-white rounded-2xl font-black text-lg shadow-lg shadow-green-200 hover:scale-[1.02] active:scale-95 transition-all mt-4 flex items-center justify-center gap-2">
+                        <CheckCircle2 /> Concluir
+                    </button>
+                  </form>
+              </div>
+          </div>
+      );
+  }
+
+  // --- Main App Render ---
+
   return (
     <div className="relative w-screen h-screen overflow-hidden flex flex-col text-slate-700 bg-transparent">
       <Confetti ref={confettiRef} />
+      
+      {/* Sidebar */}
       <div className={`fixed inset-y-4 left-4 z-50 w-72 bg-white/90 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/50 transform transition-transform duration-300 ease-in-out flex flex-col md:absolute md:translate-x-0 md:h-auto md:m-0 md:rounded-3xl md:top-4 md:left-4 md:bottom-4 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-[120%]'}`}>
         <div className="p-6 border-b border-slate-100/50 flex justify-between items-center h-24 shrink-0">
           <Logo className="h-14 w-auto" />
           <button onClick={toggleSidebar} className="md:hidden p-2 bg-slate-100 rounded-full text-slate-500"><X size={20} /></button>
         </div>
+        
+        {/* User Info Card in Sidebar */}
+        <div className="px-4 pt-4">
+             <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl p-4 border border-blue-100 flex items-center gap-3">
+                 <div className="w-10 h-10 rounded-full bg-blue-200 flex items-center justify-center text-blue-600 font-black text-lg">
+                     {userProfile?.childName.charAt(0).toUpperCase()}
+                 </div>
+                 <div className="flex-1 min-w-0">
+                     <p className="text-sm font-black text-slate-700 truncate">{userProfile?.childName}</p>
+                     <p className="text-xs font-bold text-slate-400">{userProfile?.age} anos</p>
+                 </div>
+             </div>
+        </div>
+
         <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-8">
           <SidebarBtn active={view === 'DASHBOARD'} onClick={() => { setView('DASHBOARD'); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<LayoutDashboard size={20} />} label="Dashboard" colorClass="bg-slate-600 shadow-slate-300" />
           <div>
@@ -477,9 +597,18 @@ const App: React.FC = () => {
               {voices.map((v, i) => (<option key={i} value={i}>{v.name.replace(/(Microsoft|Google) /, '').slice(0, 20)}</option>))}
             </select>
           </div>
+
+          <div className="pt-4 border-t border-slate-100">
+              <button onClick={handleLogout} className="w-full flex items-center gap-4 px-4 py-4 rounded-2xl text-sm font-bold transition-all bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-600">
+                  <LogOut size={20} />
+                  <span>Sair</span>
+              </button>
+          </div>
         </div>
       </div>
       {isSidebarOpen && (<div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40 md:hidden" onClick={toggleSidebar} />)}
+      
+      {/* Main Content Area */}
       <main className="flex-1 flex flex-col relative h-full md:pl-[300px]">
         <header className="h-14 md:h-16 shrink-0 flex items-center justify-between px-4 z-20">
           <button onClick={toggleSidebar} className="p-3 rounded-2xl bg-white shadow-lg shadow-slate-200/50 text-slate-600 md:hidden active:scale-95 transition-transform"><Menu size={20} /></button>
@@ -492,22 +621,15 @@ const App: React.FC = () => {
                    className="relative flex items-center bg-slate-100 rounded-full p-1 h-11 w-36 shadow-inner border border-slate-200 cursor-pointer"
                    onClick={() => setDisplayStyle(prev => prev === 'standard' ? 'alternate' : 'standard')}
                >
-                   {/* Sliding Indicator */}
                    <div 
                        className={`absolute top-1 bottom-1 w-[calc(50%-4px)] bg-white rounded-full shadow-sm border border-slate-100 transition-transform duration-300 ease-out ${
                            displayStyle === 'alternate' ? 'translate-x-full left-1' : 'translate-x-0 left-1'
                        }`}
                    />
-
-                   {/* Option 1: Left */}
                    <div className={`flex-1 z-10 flex items-center justify-center transition-colors duration-300 ${displayStyle === 'standard' ? 'text-blue-500 font-black' : 'text-slate-400 font-bold'}`}>
                        <span className="text-sm tracking-wider">{contentType === ContentType.NUMBERS ? '123' : 'ABC'}</span>
                    </div>
-
-                   {/* Center Divider */}
                    <div className="z-0 w-px h-4 bg-slate-300/50" />
-
-                   {/* Option 2: Right */}
                    <div className={`flex-1 z-10 flex items-center justify-center transition-colors duration-300 ${displayStyle === 'alternate' ? 'text-blue-500 font-black' : 'text-slate-400 font-bold'}`}>
                        {contentType === ContentType.NUMBERS ? (
                            <div className="flex gap-1">
@@ -597,7 +719,6 @@ const App: React.FC = () => {
                                         />
                                     )}
                                     <div className="mb-2 flex flex-wrap justify-center items-center gap-3 shrink-0">
-                                        {/* Status Bar centralizada - agora sempre visível e única */}
                                         <div className="flex items-center gap-3 bg-white/80 backdrop-blur-sm px-4 py-1.5 rounded-full border border-slate-200 shadow-sm text-xs md:text-sm font-bold">
                                             <div className="flex items-center gap-1.5 text-slate-600 font-mono tracking-tighter"><Clock size={16} className="text-blue-400"/> {formatTime(memoryTime)}</div>
                                             <div className="w-px h-4 bg-slate-300" />
@@ -631,26 +752,20 @@ const VictoryScreen: React.FC<{
     onRetry: () => void; 
     onSelectDifficulty: () => void;
 }> = ({ result, best, onRetry, onSelectDifficulty }) => {
-    // New Calculation
     const score = calculateScore(result.timeSeconds, result.errors, result.difficulty);
-    // Best score logic: Null means no previous best. If we have a previous best, we compare.
     const isNewRecord = best === null || score > best; 
 
     return (
         <div className="absolute inset-0 z-[60] flex items-center justify-center p-4 md:p-8 animate-in zoom-in fade-in duration-300">
             <div className="bg-white rounded-[2rem] shadow-2xl border-4 border-yellow-400 p-8 md:p-12 w-full max-w-lg text-center flex flex-col items-center gap-6 relative overflow-hidden">
-                {/* Decorative Elements */}
                 <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-pink-500 via-yellow-400 to-blue-500" />
-                
                 <div className="bg-yellow-100 p-6 rounded-full text-yellow-600 animate-bounce">
                     <Trophy size={64} />
                 </div>
-
                 <div>
                     <h2 className="text-4xl font-black text-slate-700 mb-2">Parabéns!</h2>
                     <p className="text-slate-500 font-medium">Você completou o desafio de {result.difficulty} pares!</p>
                 </div>
-
                 <div className="grid grid-cols-2 gap-4 w-full">
                     <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
                         <span className="text-xs font-bold text-slate-400 uppercase tracking-widest block mb-1">Tempo</span>
@@ -671,34 +786,21 @@ const VictoryScreen: React.FC<{
                             <span className="text-4xl font-black text-blue-600 tracking-tight">{score.toLocaleString()}</span>
                         </div>
                         {isNewRecord && (
-                            <div className="bg-yellow-400 text-white px-3 py-1 rounded-full text-xs font-black animate-pulse shadow-sm">
-                                NOVO RECORDE!
-                            </div>
+                            <div className="bg-yellow-400 text-white px-3 py-1 rounded-full text-xs font-black animate-pulse shadow-sm">NOVO RECORDE!</div>
                         )}
                         {!isNewRecord && best && (
                             <div className="text-right">
                                 <span className="text-[10px] font-bold text-slate-400 block uppercase">Melhor</span>
-                                <span className="text-lg font-bold text-slate-500 font-mono">
-                                    {best.toLocaleString()}
-                                </span>
+                                <span className="text-lg font-bold text-slate-500 font-mono">{best.toLocaleString()}</span>
                             </div>
                         )}
                     </div>
                 </div>
-
                 <div className="flex flex-col w-full gap-3 mt-4">
-                    <button 
-                        onClick={onRetry}
-                        className="w-full py-4 bg-blue-500 text-white rounded-2xl font-black text-xl shadow-lg shadow-blue-200 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3"
-                    >
+                    <button onClick={onRetry} className="w-full py-4 bg-blue-500 text-white rounded-2xl font-black text-xl shadow-lg shadow-blue-200 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3">
                         <RotateCcw size={24} /> Jogar Novamente
                     </button>
-                    <button 
-                        onClick={onSelectDifficulty}
-                        className="w-full py-3 bg-slate-100 text-slate-500 rounded-2xl font-bold hover:bg-slate-200 transition-colors"
-                    >
-                        Trocar Nível
-                    </button>
+                    <button onClick={onSelectDifficulty} className="w-full py-3 bg-slate-100 text-slate-500 rounded-2xl font-bold hover:bg-slate-200 transition-colors">Trocar Nível</button>
                 </div>
             </div>
         </div>
