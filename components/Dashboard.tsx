@@ -1,25 +1,49 @@
 
 import React, { useEffect, useState } from 'react';
 import { MemoryResult, QuizHistory, ContentType } from '../types';
-import { Trophy, Clock, AlertCircle, BarChart2, Calendar, Brain, List, Activity, TrendingUp, Calculator } from 'lucide-react';
+import { Trophy, Clock, AlertCircle, BarChart2, Calendar, Brain, List, Activity, TrendingUp, Loader2 } from 'lucide-react';
+import { db, auth } from '../firebase';
+import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 
 export const Dashboard: React.FC = () => {
   const [memoryResults, setMemoryResults] = useState<MemoryResult[]>([]);
   const [quizHistory, setQuizHistory] = useState<QuizHistory | null>(null);
+  const [loading, setLoading] = useState(true);
   
   // Dashboard Controls
   const [memoryViewMode, setMemoryViewMode] = useState<'table' | 'chart'>('chart');
   const [selectedDifficulty, setSelectedDifficulty] = useState<number>(6); // Default 6 pairs
 
   useEffect(() => {
-    // Load data from localStorage
-    const savedMemory = localStorage.getItem('ab_memory_results');
-    if (savedMemory) {
-        setMemoryResults(JSON.parse(savedMemory)); 
-    }
+    const fetchData = async () => {
+        const user = auth.currentUser;
+        if (!user) {
+            setLoading(false);
+            return;
+        }
 
-    const savedQuiz = localStorage.getItem('ab_quiz_history');
-    if (savedQuiz) setQuizHistory(JSON.parse(savedQuiz));
+        try {
+            // Fetch Quiz Stats
+            const quizRef = doc(db, "users", user.uid, "stats", "quiz");
+            const quizSnap = await getDoc(quizRef);
+            if (quizSnap.exists()) {
+                setQuizHistory(quizSnap.data() as QuizHistory);
+            }
+
+            // Fetch Memory Results
+            const memoryRef = collection(db, "users", user.uid, "memory_results");
+            const memorySnap = await getDocs(memoryRef);
+            const memoryData = memorySnap.docs.map(doc => doc.data() as MemoryResult);
+            setMemoryResults(memoryData);
+
+        } catch (error) {
+            console.error("Error fetching dashboard data:", error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    fetchData();
   }, []);
 
   const formatDate = (timestamp: number) => {
@@ -44,6 +68,15 @@ export const Dashboard: React.FC = () => {
   const filteredMemoryResults = memoryResults
     .filter(r => r.difficulty === selectedDifficulty)
     .sort((a, b) => a.date - b.date); // Oldest first for Chart
+
+  if (loading) {
+      return (
+          <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 animate-in fade-in">
+              <Loader2 className="animate-spin mb-2" size={32} />
+              <p className="text-sm font-bold">Carregando estatísticas...</p>
+          </div>
+      );
+  }
 
   return (
     <div className="w-full h-full overflow-y-auto custom-scrollbar p-4 md:p-8 space-y-8 bg-slate-50/50">

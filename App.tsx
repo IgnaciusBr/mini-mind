@@ -8,7 +8,7 @@ import { Logo } from './components/Logo';
 import { Dashboard } from './components/Dashboard';
 import { AuthScreen } from './components/AuthScreen';
 import { db, auth } from './firebase';
-import { collection, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc, setDoc, addDoc, query, where, increment } from 'firebase/firestore';
 import { onAuthStateChanged, signOut, User, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { 
   Menu, 
@@ -44,8 +44,8 @@ interface MemoryCardState {
     isMatched: boolean;
 }
 
-const STORAGE_KEY_MEMORY = 'ab_memory_results';
-const STORAGE_KEY_QUIZ = 'ab_quiz_history';
+const STORAGE_KEY_MEMORY = 'ab_memory_results'; // Deprecated in favor of Firestore
+const STORAGE_KEY_QUIZ = 'ab_quiz_history';   // Deprecated in favor of Firestore
 
 type ViewState = 'GAME' | 'DASHBOARD';
 
@@ -94,6 +94,8 @@ const App: React.FC = () => {
   const [isVictory, setIsVictory] = useState(false);
   const [lastResult, setLastResult] = useState<MemoryResult | null>(null);
   const [personalBest, setPersonalBest] = useState<number | null>(null);
+  // Local cache of memory results for calculating Personal Best without refetching every time
+  const [memoryHistory, setMemoryHistory] = useState<MemoryResult[]>([]);
 
   const { speak, voices, selectedVoice, setSelectedVoice } = useSpeech();
   const confettiRef = useRef<ConfettiHandle>(null);
@@ -119,6 +121,13 @@ const App: React.FC = () => {
                 if (docSnap.exists()) {
                     setUserProfile(docSnap.data() as UserProfile);
                     setIsCompletingProfile(false);
+
+                    // Load Memory History for Personal Best calculation
+                    const memoryRef = collection(db, "users", currentUser.uid, "memory_results");
+                    const memorySnap = await getDocs(memoryRef);
+                    const history = memorySnap.docs.map(d => d.data() as MemoryResult);
+                    setMemoryHistory(history);
+
                 } else {
                     // Profile doesn't exist (likely Google Login for first time)
                     setUserProfile(null);
@@ -126,11 +135,11 @@ const App: React.FC = () => {
                 }
             } catch (error) {
                 console.error("Erro ao buscar perfil:", error);
-                // Se houver erro de permissão no perfil, forçar logout para evitar estado inconsistente
                 await signOut(auth);
             }
         } else {
             setUserProfile(null);
+            setMemoryHistory([]);
         }
         setAuthLoading(false);
     });
@@ -163,15 +172,12 @@ const App: React.FC = () => {
         await Promise.all(promises);
       } catch (error) {
         console.error("Erro ao carregar dados do Firebase:", error);
-        // CRITICAL FIX: Se der erro ao carregar dados (ex: permissão negada), 
-        // força o logout para garantir que a tela de login apareça.
         await signOut(auth);
       } finally {
         setTimeout(() => setIsLoadingAssets(false), 500);
       }
     };
     
-    // Inicia carregamento de dados independentemente do Auth, mas o Auth controla o acesso
     initializeData();
 
     return () => unsubscribe();
@@ -252,7 +258,6 @@ const App: React.FC = () => {
     try {
         await signOut(auth);
         setView('GAME');
-        // Force reload to clear any internal states
         window.location.reload();
     } catch (error) {
         console.error("Error signing out", error);
@@ -279,16 +284,27 @@ const App: React.FC = () => {
       }
   };
 
-  const saveQuizStats = (isCorrect: boolean) => {
+  const saveQuizStats = async (isCorrect: boolean) => {
+    // Update local session stats for immediate feedback (if needed in UI)
     setQuizSessionStats(prev => ({
         correct: prev.correct + (isCorrect ? 1 : 0),
         wrong: prev.wrong + (isCorrect ? 0 : 1)
     }));
-    const saved = localStorage.getItem(STORAGE_KEY_QUIZ);
-    let history: QuizHistory = saved ? JSON.parse(saved) : {};
-    if (!history[contentType]) history[contentType] = { correct: 0, wrong: 0 };
-    if (isCorrect) history[contentType].correct++; else history[contentType].wrong++;
-    localStorage.setItem(STORAGE_KEY_QUIZ, JSON.stringify(history));
+
+    if (!user) return;
+
+    try {
+        const statsRef = doc(db, "users", user.uid, "stats", "quiz");
+        // Use Firestore increment for atomic updates
+        await setDoc(statsRef, {
+            [contentType]: {
+                correct: increment(isCorrect ? 1 : 0),
+                wrong: increment(isCorrect ? 0 : 1)
+            }
+        }, { merge: true });
+    } catch (error) {
+        console.error("Error saving quiz stats:", error);
+    }
   };
 
   const saveMemoryResult = () => {
@@ -299,12 +315,13 @@ const App: React.FC = () => {
         timeSeconds: memoryTime,
         errors: memoryErrors
     };
-    const saved = localStorage.getItem(STORAGE_KEY_MEMORY);
-    const results: MemoryResult[] = saved ? JSON.parse(saved) : [];
+
+    // Calculate Personal Best based on Local History Cache + Current Result
+    // We do this before saving to DB so the UI updates instantly
+    const allResults = [...memoryHistory, result];
     
-    // Check for personal best
     const currentScore = calculateScore(result.timeSeconds, result.errors, result.difficulty);
-    const previousBestScore = results
+    const previousBestScore = memoryHistory
         .filter(r => r.difficulty === memoryDifficulty)
         .reduce((best, curr) => {
             const score = calculateScore(curr.timeSeconds, curr.errors, curr.difficulty);
@@ -312,9 +329,16 @@ const App: React.FC = () => {
         }, null as number | null);
         
     setPersonalBest(previousBestScore);
+    
+    // Update local cache
+    setMemoryHistory(allResults);
 
-    results.push(result);
-    localStorage.setItem(STORAGE_KEY_MEMORY, JSON.stringify(results));
+    // Save to Firebase
+    if (user) {
+        addDoc(collection(db, "users", user.uid, "memory_results"), result)
+            .catch(err => console.error("Error saving memory result:", err));
+    }
+
     return result;
   };
 
