@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { ContentType, GameMode, COLORS, GameItem, PRONUNCIATION_MAP, MemoryResult, QuizHistory, QuizStats, UserProfile } from './types';
 import { useSpeech } from './hooks/useSpeech';
@@ -33,7 +34,10 @@ import {
   Calculator,
   LogOut,
   User as UserIcon,
-  CheckCircle2
+  CheckCircle2,
+  Home,
+  ArrowLeft,
+  ArrowRight
 } from 'lucide-react';
 
 interface MemoryCardState {
@@ -44,10 +48,7 @@ interface MemoryCardState {
     isMatched: boolean;
 }
 
-const STORAGE_KEY_MEMORY = 'ab_memory_results'; // Deprecated in favor of Firestore
-const STORAGE_KEY_QUIZ = 'ab_quiz_history';   // Deprecated in favor of Firestore
-
-type ViewState = 'GAME' | 'DASHBOARD';
+type ViewState = 'HOME' | 'GAME' | 'DASHBOARD' | 'SETTINGS';
 
 // --- MATH LOGIC: Inverse Efficiency Model (Hyperbola) ---
 const calculateScore = (time: number, errors: number, difficulty: number) => {
@@ -69,7 +70,7 @@ const App: React.FC = () => {
   // --- Game State ---
   const [isLoadingAssets, setIsLoadingAssets] = useState(true);
   const [dbAnimals, setDbAnimals] = useState<GameItem[]>([]);
-  const [view, setView] = useState<ViewState>('GAME');
+  const [view, setView] = useState<ViewState>('HOME'); // Start at HOME
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [contentType, setContentType] = useState<ContentType>(ContentType.NUMBERS);
   const [gameMode, setGameMode] = useState<GameMode>(GameMode.EXPLORE);
@@ -109,7 +110,6 @@ const App: React.FC = () => {
     setPersistence(auth, browserLocalPersistence).catch(console.error);
 
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-        console.log("Estado de Autenticação Alterado:", currentUser ? "Logado" : "Não Logado");
         setUser(currentUser);
         
         if (currentUser) {
@@ -257,7 +257,7 @@ const App: React.FC = () => {
   const handleLogout = async () => {
     try {
         await signOut(auth);
-        setView('GAME');
+        setView('HOME');
         window.location.reload();
     } catch (error) {
         console.error("Error signing out", error);
@@ -295,7 +295,6 @@ const App: React.FC = () => {
 
     try {
         const statsRef = doc(db, "users", user.uid, "stats", "quiz");
-        // Use Firestore increment for atomic updates
         await setDoc(statsRef, {
             [contentType]: {
                 correct: increment(isCorrect ? 1 : 0),
@@ -316,8 +315,6 @@ const App: React.FC = () => {
         errors: memoryErrors
     };
 
-    // Calculate Personal Best based on Local History Cache + Current Result
-    // We do this before saving to DB so the UI updates instantly
     const allResults = [...memoryHistory, result];
     
     const currentScore = calculateScore(result.timeSeconds, result.errors, result.difficulty);
@@ -329,11 +326,8 @@ const App: React.FC = () => {
         }, null as number | null);
         
     setPersonalBest(previousBestScore);
-    
-    // Update local cache
     setMemoryHistory(allResults);
 
-    // Save to Firebase
     if (user) {
         addDoc(collection(db, "users", user.uid, "memory_results"), result)
             .catch(err => console.error("Error saving memory result:", err));
@@ -494,11 +488,24 @@ const App: React.FC = () => {
     }
   };
 
+  // --- Navigation & View Logic ---
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
+
+  const selectContentType = (type: ContentType) => {
+      setContentType(type);
+      setGameMode(GameMode.EXPLORE);
+      setView('GAME');
+  };
+
+  const goHome = () => {
+      setView('HOME');
+      setIsSidebarOpen(false);
+  };
   
   // Helpers
   const getTitle = () => {
     if (view === 'DASHBOARD') return "Dashboard";
+    if (view === 'SETTINGS') return "Configurações";
     if (gameMode === GameMode.MEMORY) return isVictory ? "Vitória!" : "Jogo da Memória";
     if (gameMode === GameMode.QUIZ && quizTarget) return `Encontre: ${quizTarget.text}`;
     if (gameMode === GameMode.FLASHCARD) return "Observe";
@@ -537,7 +544,6 @@ const App: React.FC = () => {
                 <p className="text-xl font-bold text-slate-500 animate-pulse">
                     {authLoading ? 'Verificando usuário...' : 'Preparando a diversão...'}
                 </p>
-                {/* Fallback button if loader gets stuck due to network/auth issues */}
                 {authLoading && (
                      <button 
                         onClick={() => window.location.reload()} 
@@ -551,12 +557,10 @@ const App: React.FC = () => {
     );
   }
 
-  // Se não tem usuário logado, mostra Login
   if (!user) {
       return <AuthScreen onLoginSuccess={() => setAuthLoading(false)} />;
   }
 
-  // Se tem usuário mas não tem perfil, mostra completamento de perfil
   if (isCompletingProfile) {
       return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-50 p-4">
@@ -601,107 +605,220 @@ const App: React.FC = () => {
   // --- Main App Render ---
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden flex flex-col text-slate-700 bg-transparent">
+    // pb-safe adds Safe Area padding at the bottom
+    <div className="relative w-screen h-screen overflow-hidden flex flex-col text-slate-700 bg-transparent pb-safe">
       <Confetti ref={confettiRef} />
       
-      {/* Sidebar */}
-      <div className={`fixed inset-y-4 left-4 z-50 w-72 bg-white/90 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/50 transform transition-transform duration-300 ease-in-out flex flex-col md:absolute md:translate-x-0 md:h-auto md:m-0 md:rounded-3xl md:top-4 md:left-4 md:bottom-4 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-[120%]'}`}>
-        <div className="p-6 border-b border-slate-100/50 flex justify-between items-center h-24 shrink-0">
-          <Logo className="h-14 w-auto" />
-          <button onClick={toggleSidebar} className="md:hidden p-2 bg-slate-100 rounded-full text-slate-500"><X size={20} /></button>
-        </div>
-        
-        {/* User Info Card in Sidebar */}
-        <div className="px-4 pt-4">
-             <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl p-4 border border-blue-100 flex items-center gap-3">
-                 <div className="w-10 h-10 rounded-full bg-blue-200 flex items-center justify-center text-blue-600 font-black text-lg">
-                     {userProfile?.childName.charAt(0).toUpperCase()}
-                 </div>
-                 <div className="flex-1 min-w-0">
-                     <p className="text-sm font-black text-slate-700 truncate">{userProfile?.childName}</p>
-                     <p className="text-xs font-bold text-slate-400">{userProfile?.age} anos</p>
-                 </div>
-             </div>
-        </div>
+      {/* Sidebar - Only visible in GAME mode */}
+      {view === 'GAME' && (
+        <>
+            <div className={`fixed inset-y-4 left-4 z-50 w-72 bg-white/90 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/50 transform transition-transform duration-300 ease-in-out flex flex-col md:absolute md:translate-x-0 md:h-auto md:m-0 md:rounded-3xl md:top-4 md:left-4 md:bottom-4 mb-safe ${isSidebarOpen ? 'translate-x-0' : '-translate-x-[120%]'}`}>
+                <div className="p-6 border-b border-slate-100/50 flex justify-between items-center h-24 shrink-0">
+                    <Logo className="h-14 w-auto" />
+                    <button onClick={toggleSidebar} className="md:hidden p-2 bg-slate-100 rounded-full text-slate-500"><X size={20} /></button>
+                </div>
+                
+                {/* Current Mode Indicator */}
+                <div className="px-4 pt-4">
+                    <div className="bg-blue-50 rounded-2xl p-4 border border-blue-100 text-center">
+                        <span className="text-xs font-bold text-blue-400 uppercase tracking-widest block mb-1">Modo Atual</span>
+                        <div className="font-black text-blue-600 text-lg flex items-center justify-center gap-2">
+                            {contentType === ContentType.NUMBERS && <Hash size={20} />}
+                            {contentType === ContentType.ALPHABET && <Type size={20} />}
+                            {contentType === ContentType.VOWELS && <Volume2 size={20} />}
+                            {contentType === ContentType.ANIMALS && <Cat size={20} />}
+                            <span>{contentType}</span>
+                        </div>
+                    </div>
+                </div>
 
-        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-8">
-          <SidebarBtn active={view === 'DASHBOARD'} onClick={() => { setView('DASHBOARD'); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<LayoutDashboard size={20} />} label="Dashboard" colorClass="bg-slate-600 shadow-slate-300" />
-          <div>
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 ml-2">Aprender</h3>
-            <div className="space-y-3">
-              <SidebarBtn active={view === 'GAME' && contentType === ContentType.NUMBERS} onClick={() => { setView('GAME'); if(gameMode !== GameMode.MEMORY) setContentType(ContentType.NUMBERS); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Hash size={20} />} label="123 Números" colorClass="bg-blue-400 shadow-blue-200" disabled={gameMode === GameMode.MEMORY} />
-              <SidebarBtn active={view === 'GAME' && contentType === ContentType.ALPHABET} onClick={() => { setView('GAME'); if(gameMode !== GameMode.MEMORY) setContentType(ContentType.ALPHABET); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Type size={20} />} label="ABC Alfabeto" colorClass="bg-green-400 shadow-green-200" disabled={gameMode === GameMode.MEMORY} />
-              <SidebarBtn active={view === 'GAME' && contentType === ContentType.VOWELS} onClick={() => { setView('GAME'); if(gameMode !== GameMode.MEMORY) setContentType(ContentType.VOWELS); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Volume2 size={20} />} label="AEIOU Vogais" colorClass="bg-purple-400 shadow-purple-200" disabled={gameMode === GameMode.MEMORY} />
-              <SidebarBtn active={view === 'GAME' && contentType === ContentType.ANIMALS} onClick={() => { setView('GAME'); setContentType(ContentType.ANIMALS); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Cat size={20} />} label="Animais" colorClass="bg-yellow-400 shadow-yellow-200" />
+                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-8">
+                <div>
+                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 ml-2">Modo de Jogo</h3>
+                    <div className="space-y-3">
+                        <SidebarBtn active={gameMode === GameMode.EXPLORE} onClick={() => { setGameMode(GameMode.EXPLORE); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Eye size={20} />} label="Explorar" colorClass="bg-orange-400 shadow-orange-200" />
+                        <SidebarBtn active={gameMode === GameMode.FLASHCARD} onClick={() => { setGameMode(GameMode.FLASHCARD); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Play size={20} />} label="Flashcards" colorClass="bg-pink-400 shadow-pink-200" />
+                        <SidebarBtn active={gameMode === GameMode.QUIZ} onClick={() => { setGameMode(GameMode.QUIZ); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<HelpCircle size={20} />} label="Quiz" colorClass="bg-teal-400 shadow-teal-200" />
+                        <SidebarBtn active={gameMode === GameMode.MEMORY} onClick={() => { setGameMode(GameMode.MEMORY); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Grid size={20} />} label="Memória" colorClass="bg-indigo-400 shadow-indigo-200" />
+                    </div>
+                </div>
+                </div>
             </div>
-          </div>
-          <div>
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 ml-2">Modo de Jogo</h3>
-            <div className="space-y-3">
-              <SidebarBtn active={view === 'GAME' && gameMode === GameMode.EXPLORE} onClick={() => { setView('GAME'); setGameMode(GameMode.EXPLORE); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Eye size={20} />} label="Explorar" colorClass="bg-orange-400 shadow-orange-200" />
-              <SidebarBtn active={view === 'GAME' && gameMode === GameMode.FLASHCARD} onClick={() => { setView('GAME'); setGameMode(GameMode.FLASHCARD); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Play size={20} />} label="Flashcards" colorClass="bg-pink-400 shadow-pink-200" />
-              <SidebarBtn active={view === 'GAME' && gameMode === GameMode.QUIZ} onClick={() => { setView('GAME'); setGameMode(GameMode.QUIZ); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<HelpCircle size={20} />} label="Quiz" colorClass="bg-teal-400 shadow-teal-200" />
-              <SidebarBtn active={view === 'GAME' && gameMode === GameMode.MEMORY} onClick={() => { setView('GAME'); setGameMode(GameMode.MEMORY); setContentType(ContentType.ANIMALS); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Grid size={20} />} label="Memória" colorClass="bg-indigo-400 shadow-indigo-200" />
-            </div>
-          </div>
-          <div>
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 ml-2 flex items-center gap-2"><Mic size={14} /> Voz</h3>
-            <select className="w-full p-3 rounded-xl border-2 border-slate-100 bg-slate-50 text-sm font-semibold text-slate-600 focus:outline-none focus:border-blue-300 transition-colors" onChange={(e) => setSelectedVoice(voices[parseInt(e.target.value)])} value={voices.indexOf(selectedVoice as SpeechSynthesisVoice)}>
-              {voices.length === 0 && <option>Padrão</option>}
-              {voices.map((v, i) => (<option key={i} value={i}>{v.name.replace(/(Microsoft|Google) /, '').slice(0, 20)}</option>))}
-            </select>
-          </div>
-
-          <div className="pt-4 border-t border-slate-100">
-              <button onClick={handleLogout} className="w-full flex items-center gap-4 px-4 py-4 rounded-2xl text-sm font-bold transition-all bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-600">
-                  <LogOut size={20} />
-                  <span>Sair</span>
-              </button>
-          </div>
-        </div>
-      </div>
-      {isSidebarOpen && (<div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40 md:hidden" onClick={toggleSidebar} />)}
+            {isSidebarOpen && (<div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40 md:hidden" onClick={toggleSidebar} />)}
+        </>
+      )}
       
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col relative h-full md:pl-[300px]">
-        <header className="h-14 md:h-16 shrink-0 flex items-center justify-between px-4 z-20">
-          <button onClick={toggleSidebar} className="p-3 rounded-2xl bg-white shadow-lg shadow-slate-200/50 text-slate-600 md:hidden active:scale-95 transition-transform"><Menu size={20} /></button>
-          <div className="flex-1 flex justify-center items-center gap-4">
-            <h1 className="text-xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 drop-shadow-sm truncate px-4 py-2">{getTitle()}</h1>
-          </div>
-          <div className="w-auto flex justify-end">
-            {view === 'GAME' && gameMode !== GameMode.MEMORY && contentType !== ContentType.ANIMALS && (
-               <div 
-                   className="relative flex items-center bg-slate-100 rounded-full p-1 h-11 w-36 shadow-inner border border-slate-200 cursor-pointer"
-                   onClick={() => setDisplayStyle(prev => prev === 'standard' ? 'alternate' : 'standard')}
-               >
-                   <div 
-                       className={`absolute top-1 bottom-1 w-[calc(50%-4px)] bg-white rounded-full shadow-sm border border-slate-100 transition-transform duration-300 ease-out ${
-                           displayStyle === 'alternate' ? 'translate-x-full left-1' : 'translate-x-0 left-1'
-                       }`}
-                   />
-                   <div className={`flex-1 z-10 flex items-center justify-center transition-colors duration-300 ${displayStyle === 'standard' ? 'text-blue-500 font-black' : 'text-slate-400 font-bold'}`}>
-                       <span className="text-sm tracking-wider">{contentType === ContentType.NUMBERS ? '123' : 'ABC'}</span>
-                   </div>
-                   <div className="z-0 w-px h-4 bg-slate-300/50" />
-                   <div className={`flex-1 z-10 flex items-center justify-center transition-colors duration-300 ${displayStyle === 'alternate' ? 'text-blue-500 font-black' : 'text-slate-400 font-bold'}`}>
-                       {contentType === ContentType.NUMBERS ? (
-                           <div className="flex gap-1">
-                               <div className={`w-1.5 h-1.5 rounded-full ${displayStyle === 'alternate' ? 'bg-blue-500' : 'bg-slate-400'}`} />
-                               <div className={`w-1.5 h-1.5 rounded-full ${displayStyle === 'alternate' ? 'bg-blue-500' : 'bg-slate-400'}`} />
-                               <div className={`w-1.5 h-1.5 rounded-full ${displayStyle === 'alternate' ? 'bg-blue-500' : 'bg-slate-400'}`} />
-                           </div>
-                       ) : (
-                           <span className="text-sm tracking-wider">abc</span>
-                       )}
-                   </div>
-               </div>
-            )}
-          </div>
-        </header>
+      <main className={`flex-1 flex flex-col relative h-full transition-all duration-300 ${view === 'GAME' ? 'md:pl-[300px]' : 'pl-0'}`}>
+        
+        {/* Header - Only visible in GAME, DASHBOARD, SETTINGS */}
+        {view !== 'HOME' && (
+            <header className="h-14 md:h-16 shrink-0 flex items-center justify-between px-4 z-20 pt-safe mt-2">
+            <div className="flex items-center gap-3">
+                {/* Back Button */}
+                <button 
+                    onClick={goHome} 
+                    className="p-3 rounded-2xl bg-white shadow-lg shadow-slate-200/50 text-slate-600 hover:bg-slate-50 hover:scale-105 transition-all active:scale-95"
+                    aria-label="Voltar para o início"
+                >
+                    <ArrowLeft size={20} strokeWidth={3} />
+                </button>
+
+                {/* Sidebar Toggle (Only GAME) */}
+                {view === 'GAME' && (
+                    <button onClick={toggleSidebar} className="p-3 rounded-2xl bg-white shadow-lg shadow-slate-200/50 text-slate-600 md:hidden active:scale-95 transition-transform">
+                        <Menu size={20} />
+                    </button>
+                )}
+            </div>
+
+            <div className="flex-1 flex justify-center items-center gap-4 mx-4">
+                <h1 className="text-xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 drop-shadow-sm truncate px-4 py-2">{getTitle()}</h1>
+            </div>
+            
+            <div className="w-auto flex justify-end">
+                {view === 'GAME' && gameMode !== GameMode.MEMORY && contentType !== ContentType.ANIMALS && (
+                <div 
+                    className="relative flex items-center bg-slate-100 rounded-full p-1 h-11 w-36 shadow-inner border border-slate-200 cursor-pointer"
+                    onClick={() => setDisplayStyle(prev => prev === 'standard' ? 'alternate' : 'standard')}
+                >
+                    <div 
+                        className={`absolute top-1 bottom-1 w-[calc(50%-4px)] bg-white rounded-full shadow-sm border border-slate-100 transition-transform duration-300 ease-out ${
+                            displayStyle === 'alternate' ? 'translate-x-full left-1' : 'translate-x-0 left-1'
+                        }`}
+                    />
+                    <div className={`flex-1 z-10 flex items-center justify-center transition-colors duration-300 ${displayStyle === 'standard' ? 'text-blue-500 font-black' : 'text-slate-400 font-bold'}`}>
+                        <span className="text-sm tracking-wider">{contentType === ContentType.NUMBERS ? '123' : 'ABC'}</span>
+                    </div>
+                    <div className="z-0 w-px h-4 bg-slate-300/50" />
+                    <div className={`flex-1 z-10 flex items-center justify-center transition-colors duration-300 ${displayStyle === 'alternate' ? 'text-blue-500 font-black' : 'text-slate-400 font-bold'}`}>
+                        {contentType === ContentType.NUMBERS ? (
+                            <div className="flex gap-1">
+                                <div className={`w-1.5 h-1.5 rounded-full ${displayStyle === 'alternate' ? 'bg-blue-500' : 'bg-slate-400'}`} />
+                                <div className={`w-1.5 h-1.5 rounded-full ${displayStyle === 'alternate' ? 'bg-blue-500' : 'bg-slate-400'}`} />
+                                <div className={`w-1.5 h-1.5 rounded-full ${displayStyle === 'alternate' ? 'bg-blue-500' : 'bg-slate-400'}`} />
+                            </div>
+                        ) : (
+                            <span className="text-sm tracking-wider">abc</span>
+                        )}
+                    </div>
+                </div>
+                )}
+            </div>
+            </header>
+        )}
 
         <div className="flex-1 overflow-hidden relative p-2 md:p-4 flex flex-col items-center justify-center min-h-0">
+            {view === 'HOME' && (
+                <div className="w-full h-full flex flex-col pt-safe">
+                    {/* Home Header */}
+                    <div className="flex justify-between items-center px-4 py-4 md:px-8">
+                         <div className="flex items-center gap-3">
+                             <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-black border-2 border-white shadow-md">
+                                 {userProfile?.childName.charAt(0).toUpperCase()}
+                             </div>
+                             <div>
+                                 <p className="text-xs font-bold text-slate-400 uppercase">Olá,</p>
+                                 <p className="text-lg font-black text-slate-700 leading-none">{userProfile?.childName}</p>
+                             </div>
+                         </div>
+                         <button 
+                            onClick={() => setView('SETTINGS')}
+                            className="p-3 bg-white rounded-2xl shadow-md shadow-slate-200 text-slate-400 hover:text-blue-500 transition-colors"
+                         >
+                             <Settings size={24} />
+                         </button>
+                    </div>
+
+                    <div className="flex-1 flex flex-col items-center justify-center p-4 gap-6 md:gap-10 overflow-y-auto custom-scrollbar pb-20">
+                        <div className="mb-2 animate-bounce">
+                            <Logo className="w-64 h-auto" />
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-4 w-full max-w-2xl">
+                             <HomeCard 
+                                title="123 Números" 
+                                color="bg-blue-400" 
+                                shadow="shadow-blue-200" 
+                                icon={<Hash size={48} className="text-white/90" />} 
+                                onClick={() => selectContentType(ContentType.NUMBERS)} 
+                             />
+                             <HomeCard 
+                                title="ABC Alfabeto" 
+                                color="bg-green-400" 
+                                shadow="shadow-green-200" 
+                                icon={<Type size={48} className="text-white/90" />} 
+                                onClick={() => selectContentType(ContentType.ALPHABET)} 
+                             />
+                             <HomeCard 
+                                title="AEIOU Vogais" 
+                                color="bg-purple-400" 
+                                shadow="shadow-purple-200" 
+                                icon={<Volume2 size={48} className="text-white/90" />} 
+                                onClick={() => selectContentType(ContentType.VOWELS)} 
+                             />
+                             <HomeCard 
+                                title="Animais" 
+                                color="bg-yellow-400" 
+                                shadow="shadow-yellow-200" 
+                                icon={<Cat size={48} className="text-white/90" />} 
+                                onClick={() => selectContentType(ContentType.ANIMALS)} 
+                             />
+                        </div>
+
+                        <button 
+                            onClick={() => setView('DASHBOARD')}
+                            className="w-full max-w-2xl p-6 bg-white rounded-3xl shadow-lg border-2 border-slate-100 flex items-center gap-4 hover:scale-[1.02] transition-transform group"
+                        >
+                            <div className="p-3 bg-slate-100 rounded-2xl text-slate-500 group-hover:bg-slate-200 transition-colors">
+                                <LayoutDashboard size={32} />
+                            </div>
+                            <div className="text-left">
+                                <h3 className="text-xl font-black text-slate-700">Meu Progresso</h3>
+                                <p className="text-slate-400 font-semibold text-sm">Veja suas conquistas e medalhas</p>
+                            </div>
+                            <div className="ml-auto text-slate-300">
+                                <ArrowRight size={24} />
+                            </div>
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {view === 'SETTINGS' && (
+                <div className="w-full max-w-md bg-white rounded-3xl shadow-lg border border-slate-100 p-6 md:p-8 animate-in zoom-in-95 duration-200">
+                    <h2 className="text-2xl font-black text-slate-700 mb-6 flex items-center gap-2">
+                        <Settings className="text-slate-400"/> Configurações
+                    </h2>
+                    
+                    <div className="space-y-6">
+                        <div>
+                            <label className="text-xs font-bold text-slate-400 uppercase tracking-widest block mb-2 flex items-center gap-2">
+                                <Mic size={14} /> Voz do Narrador
+                            </label>
+                            <select 
+                                className="w-full p-4 rounded-xl border-2 border-slate-100 bg-slate-50 text-base font-semibold text-slate-600 focus:outline-none focus:border-blue-300 transition-colors cursor-pointer" 
+                                onChange={(e) => setSelectedVoice(voices[parseInt(e.target.value)])} 
+                                value={voices.indexOf(selectedVoice as SpeechSynthesisVoice)}
+                            >
+                                {voices.length === 0 && <option>Padrão</option>}
+                                {voices.map((v, i) => (<option key={i} value={i}>{v.name.replace(/(Microsoft|Google) /, '').slice(0, 30)}</option>))}
+                            </select>
+                            <p className="text-xs text-slate-400 mt-2 px-1">Selecione a voz que irá narrar os jogos.</p>
+                        </div>
+
+                        <div className="pt-6 border-t border-slate-100">
+                            <button onClick={handleLogout} className="w-full flex items-center justify-center gap-3 px-6 py-4 rounded-2xl text-base font-black transition-all bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-600 border border-red-100">
+                                <LogOut size={20} />
+                                <span>Sair da Conta</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {view === 'DASHBOARD' && <Dashboard />}
+
             {view === 'GAME' && (
                 <>
                     {feedback && (<div className="absolute inset-0 z-50 flex items-center justify-center bg-white/20 backdrop-blur-sm animate-in fade-in duration-200"><div className="text-9xl animate-bounce filter drop-shadow-2xl">{feedback === 'correct' ? '🌟' : '🤔'}</div></div>)}
@@ -866,6 +983,22 @@ const SidebarBtn: React.FC<{ active: boolean; onClick: () => void; icon: React.R
     <div className={`${!disabled && active ? 'text-white' : disabled ? 'text-slate-300' : 'text-slate-400'}`}>{disabled ? <Lock size={20} /> : icon}</div>
     <span className="tracking-wide">{label}</span>
   </button>
+);
+
+const HomeCard: React.FC<{ title: string; color: string; shadow: string; icon: React.ReactNode; onClick: () => void }> = ({ title, color, shadow, icon, onClick }) => (
+    <button 
+        onClick={onClick}
+        className={`w-full aspect-[4/3] rounded-3xl ${color} ${shadow} shadow-lg flex flex-col items-center justify-center gap-3 text-white hover:scale-[1.03] active:scale-95 transition-all relative overflow-hidden group`}
+    >
+        {/* Decorative Circles */}
+        <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -mr-8 -mt-8 pointer-events-none group-hover:scale-125 transition-transform" />
+        <div className="absolute bottom-0 left-0 w-16 h-16 bg-black/5 rounded-full -ml-6 -mb-6 pointer-events-none" />
+        
+        <div className="drop-shadow-sm transform group-hover:-rotate-6 transition-transform duration-300">
+            {icon}
+        </div>
+        <span className="text-xl font-black tracking-wide drop-shadow-md">{title}</span>
+    </button>
 );
 
 export default App;
