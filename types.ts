@@ -10,7 +10,8 @@ export enum ContentType {
     EXPLORE = 'EXPLORAR',
     FLASHCARD = 'FLASHCARD',
     QUIZ = 'QUIZ',
-    MEMORY = 'MEMORIA'
+    MEMORY = 'MEMORIA',
+    TRACING = 'DESENHAR'
   }
   
   export interface GameItem {

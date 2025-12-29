@@ -8,6 +8,7 @@ import { MemoryCard } from './components/MemoryCard';
 import { Logo } from './components/Logo';
 import { Dashboard } from './components/Dashboard';
 import { AuthScreen } from './components/AuthScreen';
+import { TracingGame } from './components/TracingGame'; // New Component
 import { db, auth } from './firebase';
 import { collection, getDocs, doc, getDoc, setDoc, addDoc, query, where, increment } from 'firebase/firestore';
 import { onAuthStateChanged, signOut, User, setPersistence, browserLocalPersistence } from 'firebase/auth';
@@ -24,7 +25,7 @@ import {
   Cat,
   Grid,
   Lock,
-  LockOpen, // Added LockOpen
+  LockOpen,
   LayoutDashboard,
   Clock,
   AlertCircle,
@@ -38,7 +39,8 @@ import {
   CheckCircle2,
   Home,
   ArrowLeft,
-  ArrowRight
+  ArrowRight,
+  Pencil // Added Pencil Icon
 } from 'lucide-react';
 
 interface MemoryCardState {
@@ -82,6 +84,7 @@ const App: React.FC = () => {
   const [quizTarget, setQuizTarget] = useState<GameItem | null>(null);
   const [quizOptions, setQuizOptions] = useState<GameItem[]>([]);
   const [flashcardIndex, setFlashcardIndex] = useState(0);
+  const [tracingIndex, setTracingIndex] = useState(0); // For sequential tracing
   const [feedback, setFeedback] = useState<'correct' | 'wrong' | null>(null);
   const [blockInput, setBlockInput] = useState(false);
 
@@ -229,14 +232,18 @@ const App: React.FC = () => {
     setItems(newItems);
   }, [contentType, displayStyle, dbAnimals]);
 
-  // Ensure consistent state if switching contents while in Memory mode
+  // Ensure consistent state if switching contents logic
   useEffect(() => {
-      if (gameMode === GameMode.MEMORY && contentType !== ContentType.ANIMALS) {
+      // If switching to Animals from a Tracing mode, reset to explore or memory
+      if (contentType === ContentType.ANIMALS && gameMode === GameMode.TRACING) {
+          setGameMode(GameMode.EXPLORE);
+      }
+      // If switching to Numbers/Letters from Memory, reset to explore
+      if (contentType !== ContentType.ANIMALS && gameMode === GameMode.MEMORY) {
           setGameMode(GameMode.EXPLORE);
       }
   }, [contentType, gameMode]);
 
-  // ... (Other useEffects for game logic remain the same) ...
   useEffect(() => {
     if (flashcardIntervalRef.current) clearInterval(flashcardIntervalRef.current);
     if (memoryTimerRef.current) clearInterval(memoryTimerRef.current);
@@ -250,13 +257,14 @@ const App: React.FC = () => {
     setQuizSessionStats({ correct: 0, wrong: 0 }); 
     setIsMemoryTimerActive(false);
     setIsVictory(false);
-    // Reset Lock when changing game modes
     setIsChildLocked(false);
 
     if (gameMode === GameMode.QUIZ) {
       startQuizRound(items);
     } else if (gameMode === GameMode.FLASHCARD) {
       startFlashcard(items);
+    } else if (gameMode === GameMode.TRACING) {
+      setTracingIndex(0); // Always start sequence from 0
     }
   }, [gameMode, items, view]);
 
@@ -306,19 +314,16 @@ const App: React.FC = () => {
         return;
     }
 
-    // Logic for unlocking: 3 taps
     lockTapCount.current += 1;
-
     if (lockResetTimer.current) clearTimeout(lockResetTimer.current);
     
-    // Feedback for first tap
     if (lockTapCount.current === 1) {
         speak("Toque três vezes para desbloquear");
     }
 
     lockResetTimer.current = setTimeout(() => {
         lockTapCount.current = 0;
-    }, 1000); // 1 second window to tap
+    }, 1000); 
 
     if (lockTapCount.current >= 3) {
         setIsChildLocked(false);
@@ -329,7 +334,6 @@ const App: React.FC = () => {
   };
 
   const saveQuizStats = async (isCorrect: boolean) => {
-    // Update local session stats for immediate feedback (if needed in UI)
     setQuizSessionStats(prev => ({
         correct: prev.correct + (isCorrect ? 1 : 0),
         wrong: prev.wrong + (isCorrect ? 0 : 1)
@@ -497,6 +501,16 @@ const App: React.FC = () => {
     }, 3500);
   };
 
+  const handleTracingComplete = () => {
+      speak("Muito bem!");
+      if (confettiRef.current) confettiRef.current.explode(window.innerWidth/2, window.innerHeight/2);
+      
+      // Delay before next item
+      setTimeout(() => {
+          setTracingIndex(prev => (prev + 1) % items.length);
+      }, 1500);
+  };
+
   const handleItemClick = (item: GameItem, e: React.MouseEvent | React.TouchEvent) => {
     if (blockInput) return;
     const rect = (e.target as HTMLElement).getBoundingClientRect();
@@ -551,6 +565,7 @@ const App: React.FC = () => {
     if (view === 'DASHBOARD') return "Dashboard";
     if (view === 'SETTINGS') return "Configurações";
     if (gameMode === GameMode.MEMORY) return isVictory ? "Vitória!" : "Jogo da Memória";
+    if (gameMode === GameMode.TRACING) return "Vamos Desenhar!";
     if (gameMode === GameMode.QUIZ && quizTarget) return `Encontre: ${quizTarget.text}`;
     if (gameMode === GameMode.FLASHCARD) return "Observe";
     return "Toque para Aprender";
@@ -574,6 +589,14 @@ const App: React.FC = () => {
       if (totalCards === 30) return 'grid-cols-5 grid-rows-6 md:grid-cols-6 md:grid-rows-5';
       return 'grid-cols-4 grid-rows-4 md:grid-cols-6 md:grid-rows-4';
   };
+  
+  // Logic to determine if Toggle (ABC/abc) should be shown
+  // Show if: View is Game AND (Explore Mode OR (Tracing Mode AND Not Numbers))
+  // Hide if: Memory Mode OR Animals OR (Tracing Mode AND Numbers)
+  const showToggle = view === 'GAME' 
+    && contentType !== ContentType.ANIMALS 
+    && gameMode !== GameMode.MEMORY
+    && !(gameMode === GameMode.TRACING && contentType === ContentType.NUMBERS);
 
   // --- Render Conditions ---
 
@@ -683,9 +706,12 @@ const App: React.FC = () => {
                         <SidebarBtn active={gameMode === GameMode.EXPLORE} onClick={() => { setGameMode(GameMode.EXPLORE); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Eye size={20} />} label="Explorar" colorClass="bg-orange-400 shadow-orange-200" />
                         <SidebarBtn active={gameMode === GameMode.FLASHCARD} onClick={() => { setGameMode(GameMode.FLASHCARD); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Play size={20} />} label="Flashcards" colorClass="bg-pink-400 shadow-pink-200" />
                         <SidebarBtn active={gameMode === GameMode.QUIZ} onClick={() => { setGameMode(GameMode.QUIZ); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<HelpCircle size={20} />} label="Quiz" colorClass="bg-teal-400 shadow-teal-200" />
-                        {/* Only show Memory game for Animals */}
-                        {contentType === ContentType.ANIMALS && (
+                        
+                        {/* Conditional Mode Button: Memory for Animals, Tracing for Others */}
+                        {contentType === ContentType.ANIMALS ? (
                             <SidebarBtn active={gameMode === GameMode.MEMORY} onClick={() => { setGameMode(GameMode.MEMORY); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Grid size={20} />} label="Memória" colorClass="bg-indigo-400 shadow-indigo-200" />
+                        ) : (
+                            <SidebarBtn active={gameMode === GameMode.TRACING} onClick={() => { setGameMode(GameMode.TRACING); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Pencil size={20} />} label="Desenhar" colorClass="bg-indigo-400 shadow-indigo-200" />
                         )}
                     </div>
                 </div>
@@ -732,8 +758,8 @@ const App: React.FC = () => {
             </div>
             
             <div className="w-auto flex justify-end shrink-0 gap-3">
-                {/* Display Toggle - Disabled when Child Locked */}
-                {view === 'GAME' && gameMode !== GameMode.MEMORY && contentType !== ContentType.ANIMALS && (
+                {/* Display Toggle - Disabled when Child Locked - Hidden if NUMBERS && TRACING */}
+                {showToggle && (
                 <div 
                     className={`relative flex items-center bg-slate-100 rounded-full p-1 h-11 w-36 shadow-inner border border-slate-200 cursor-pointer transition-opacity duration-300 ${isChildLocked ? 'opacity-30 pointer-events-none' : 'opacity-100'}`}
                     onClick={() => !isChildLocked && setDisplayStyle(prev => prev === 'standard' ? 'alternate' : 'standard')}
@@ -949,7 +975,15 @@ const App: React.FC = () => {
                         </div>
                     )}
 
-                    {gameMode === GameMode.MEMORY && (
+                    {gameMode === GameMode.TRACING && items.length > 0 && (
+                        <TracingGame 
+                            item={items[tracingIndex]} 
+                            onComplete={handleTracingComplete} 
+                            speak={speak} 
+                        />
+                    )}
+
+                    {gameMode === GameMode.MEMORY && contentType === ContentType.ANIMALS && (
                         <div className="w-full h-full flex flex-col items-center justify-center">
                             {!isMemorySetup ? (
                                 <div className="bg-white/80 backdrop-blur-md p-8 rounded-3xl shadow-xl flex flex-col items-center gap-6 animate-in fade-in zoom-in">
