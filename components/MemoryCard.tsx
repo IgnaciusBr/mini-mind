@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { GameItem } from '../types';
 import { HelpCircle } from 'lucide-react';
@@ -17,6 +18,14 @@ export const MemoryCard: React.FC<MemoryCardProps> = ({
   onClick,
   disabled = false
 }) => {
+  // Determine dynamic font size based on text length to avoid overflow
+  // cqh = Container Query Height (percentage of the container's height)
+  const getFontSize = (text: string) => {
+    if (text.length > 10) return '35cqh'; // Long words (e.g., Hipopótamo)
+    if (text.length > 7) return '50cqh';  // Medium words (e.g., Avestruz)
+    return '65cqh';                       // Short words (e.g., Boi, Gato)
+  };
+
   return (
     <div 
       className={`
@@ -58,7 +67,7 @@ export const MemoryCard: React.FC<MemoryCardProps> = ({
             WebkitBackfaceVisibility: 'hidden'
           }}
         >
-            {/* Área da Imagem: Ocupa a parte superior, deixando espaço proporcional para o texto */}
+            {/* Área da Imagem: Ocupa a parte superior */}
             <div className="absolute top-0 left-0 right-0 bottom-[20%] flex items-center justify-center p-2">
                 {item.image ? (
                     <img 
@@ -73,12 +82,15 @@ export const MemoryCard: React.FC<MemoryCardProps> = ({
 
             {/* Área do Texto: Proporcional e responsiva */}
             <div 
-                className="absolute bottom-[4%] left-[4%] right-[4%] h-[16%] flex items-center justify-center bg-white/50 rounded-lg backdrop-blur-sm"
+                className="absolute bottom-[4%] left-[4%] right-[4%] h-[16%] flex items-center justify-center bg-white/50 rounded-lg backdrop-blur-sm px-1"
                 style={{ containerType: 'size' }}
             >
                 <span 
                     className="text-slate-800 font-black uppercase tracking-wider w-full text-center whitespace-nowrap"
-                    style={{ fontSize: '65cqh', lineHeight: 1 }}
+                    style={{ 
+                        fontSize: getFontSize(item.text), 
+                        lineHeight: 1 
+                    }}
                 >
                     {item.text}
                 </span>
