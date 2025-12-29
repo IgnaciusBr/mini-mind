@@ -24,6 +24,7 @@ export const TracingGame: React.FC<TracingGameProps> = ({ item, onComplete, spea
 
   const lastPos = useRef<{x: number, y: number} | null>(null);
   const totalShapePixels = useRef<number>(0);
+  const totalOutsidePixels = useRef<number>(0); // New ref to track total white area
 
   // Initialize Canvases and Guide
   useEffect(() => {
@@ -95,8 +96,6 @@ export const TracingGame: React.FC<TracingGameProps> = ({ item, onComplete, spea
       const mCtx = maskCanvasRef.current.getContext('2d');
       if (mCtx) {
           mCtx.clearRect(0, 0, maskCanvasRef.current.width, maskCanvasRef.current.height);
-          // Logic uses physical pixels, so scale logic is manual or font size needs adjustment
-          // Since we set width/height to *dpr, we treat it as a big canvas.
           
           const fontSize = Math.min(width * dpr, height * dpr) * 0.85;
           mCtx.font = `900 ${fontSize}px 'Fredoka', sans-serif`;
@@ -105,15 +104,19 @@ export const TracingGame: React.FC<TracingGameProps> = ({ item, onComplete, spea
           mCtx.fillStyle = '#FF0000'; // Pure Red for mask
           mCtx.fillText(item.text, (width * dpr)/2, (height * dpr)/2 + (fontSize * 0.05));
 
-          // Calculate Total Pixels in Shape
+          // Calculate Total Pixels in Shape vs Outside
           try {
             const imgData = mCtx.getImageData(0, 0, maskCanvasRef.current.width, maskCanvasRef.current.height);
-            let count = 0;
+            let insideCount = 0;
+            let totalSamples = 0;
+            
             // Sample every 4th pixel (step 16 in array) for speed
             for(let i = 3; i < imgData.data.length; i += 16) {
-                if (imgData.data[i] > 128) count++;
+                totalSamples++;
+                if (imgData.data[i] > 128) insideCount++;
             }
-            totalShapePixels.current = count;
+            totalShapePixels.current = insideCount;
+            totalOutsidePixels.current = totalSamples - insideCount;
           } catch (e) {
             console.error("Error calculating shape pixels:", e);
           }
@@ -211,7 +214,6 @@ export const TracingGame: React.FC<TracingGameProps> = ({ item, onComplete, spea
       const w = maskCanvasRef.current.width;
       const h = maskCanvasRef.current.height;
       
-      // Safety check
       if (w === 0 || h === 0) return;
 
       const mCtx = maskCanvasRef.current.getContext('2d');
@@ -240,25 +242,33 @@ export const TracingGame: React.FC<TracingGameProps> = ({ item, onComplete, spea
               }
           }
 
-          // Total pixels in the letter (estimated from sample)
-          const total = totalShapePixels.current;
+          const totalShape = totalShapePixels.current;
+          const totalOutside = totalOutsidePixels.current;
           
-          if (total === 0) return;
+          if (totalShape === 0) return;
 
-          const coverage = insideHits / total;
+          // Metric 1: How much of the letter is filled?
+          const insideCoverage = insideHits / totalShape;
+          
+          // Metric 2: How much of the WHITE AREA is painted?
+          // This is stricter than comparing misses to hits. 
+          // If you paint > 5% of the empty space, you fail.
+          const outsideErrorPercentage = totalOutside > 0 ? (outsideMisses / totalOutside) : 0;
           
           // Logic Rules:
-          // 1. Coverage must be at least 70% (Forgiving)
-          // 2. Outside Misses must not exceed Inside Hits (Prevents full screen scribbling)
-          //    If you draw twice as much outside as inside, you fail.
+          // 1. Must fill at least 70% of the letter
+          // 2. Must NOT paint more than 5% of the background
           
-          const isCleanEnough = outsideMisses < (insideHits * 1.5); 
-          const isFilledEnough = coverage > 0.70;
+          const isCleanEnough = outsideErrorPercentage <= 0.05; 
+          const isFilledEnough = insideCoverage > 0.70;
 
-          console.log(`Coverage: ${(coverage*100).toFixed(0)}%, Hits: ${insideHits}, Misses: ${outsideMisses}`);
+          console.log(`Fill: ${(insideCoverage*100).toFixed(1)}%, Error: ${(outsideErrorPercentage*100).toFixed(1)}%`);
 
           if (isFilledEnough && isCleanEnough) {
               onComplete();
+          } else if (!isCleanEnough && isFilledEnough) {
+             // Optional: You could give feedback here like "Tente não riscar fora!"
+             // For now, silent fail implies "not done yet" or "needs correction"
           }
 
       } catch (e) {
