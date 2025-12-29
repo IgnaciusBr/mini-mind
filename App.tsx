@@ -229,6 +229,13 @@ const App: React.FC = () => {
     setItems(newItems);
   }, [contentType, displayStyle, dbAnimals]);
 
+  // Ensure consistent state if switching contents while in Memory mode
+  useEffect(() => {
+      if (gameMode === GameMode.MEMORY && contentType !== ContentType.ANIMALS) {
+          setGameMode(GameMode.EXPLORE);
+      }
+  }, [contentType, gameMode]);
+
   // ... (Other useEffects for game logic remain the same) ...
   useEffect(() => {
     if (flashcardIntervalRef.current) clearInterval(flashcardIntervalRef.current);
@@ -676,7 +683,10 @@ const App: React.FC = () => {
                         <SidebarBtn active={gameMode === GameMode.EXPLORE} onClick={() => { setGameMode(GameMode.EXPLORE); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Eye size={20} />} label="Explorar" colorClass="bg-orange-400 shadow-orange-200" />
                         <SidebarBtn active={gameMode === GameMode.FLASHCARD} onClick={() => { setGameMode(GameMode.FLASHCARD); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Play size={20} />} label="Flashcards" colorClass="bg-pink-400 shadow-pink-200" />
                         <SidebarBtn active={gameMode === GameMode.QUIZ} onClick={() => { setGameMode(GameMode.QUIZ); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<HelpCircle size={20} />} label="Quiz" colorClass="bg-teal-400 shadow-teal-200" />
-                        <SidebarBtn active={gameMode === GameMode.MEMORY} onClick={() => { setGameMode(GameMode.MEMORY); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Grid size={20} />} label="Memória" colorClass="bg-indigo-400 shadow-indigo-200" />
+                        {/* Only show Memory game for Animals */}
+                        {contentType === ContentType.ANIMALS && (
+                            <SidebarBtn active={gameMode === GameMode.MEMORY} onClick={() => { setGameMode(GameMode.MEMORY); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Grid size={20} />} label="Memória" colorClass="bg-indigo-400 shadow-indigo-200" />
+                        )}
                     </div>
                 </div>
                 </div>
@@ -717,8 +727,8 @@ const App: React.FC = () => {
             </div>
 
             <div className="flex-1 flex justify-center items-center gap-4 mx-4 min-w-0">
-                 {/* Title hidden on mobile when toggle is present to avoid overlap, but visible on larger screens */}
-                <h1 className={`text-xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 drop-shadow-sm truncate px-4 py-2 ${view === 'GAME' && contentType !== ContentType.ANIMALS ? 'hidden md:block' : 'block'}`}>{getTitle()}</h1>
+                 {/* Title hidden on mobile (hidden md:block) for ALL game modes to save space */}
+                <h1 className={`text-xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 drop-shadow-sm truncate px-4 py-2 ${view === 'GAME' ? 'hidden md:block' : 'block'}`}>{getTitle()}</h1>
             </div>
             
             <div className="w-auto flex justify-end shrink-0 gap-3">
@@ -772,6 +782,15 @@ const App: React.FC = () => {
         )}
 
         <div className="flex-1 overflow-hidden relative p-2 md:p-4 flex flex-col items-center justify-center min-h-0">
+            {/* Mobile Quiz Header - Positioned below nav buttons (top of main area) */}
+            {view === 'GAME' && gameMode === GameMode.QUIZ && quizTarget && (
+                <div className="w-full text-center py-2 md:hidden animate-in fade-in slide-in-from-top-2 shrink-0">
+                     <span className="text-xl font-black text-slate-700 drop-shadow-sm">
+                        {getTitle()}
+                     </span>
+                </div>
+            )}
+
             {view === 'HOME' && (
                 <div className="w-full h-full flex flex-col pt-safe">
                     {/* Home Header */}
