@@ -34,12 +34,17 @@ export const TracingGame: React.FC<TracingGameProps> = ({ item, onComplete, spea
     if (!container || !guideCanvas || !drawingCanvas) return;
 
     const resizeAndDraw = () => {
+      if (!container) return;
+      
       const rect = container.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
       
       // Dimensions
       const width = rect.width;
       const height = rect.height;
+
+      // CRITICAL FIX: Prevent IndexSizeError if dimensions are 0 (hidden or initializing)
+      if (width === 0 || height === 0) return;
 
       // 1. Setup Display Canvases (Scaled for Retina)
       [guideCanvas, drawingCanvas].forEach(cvs => {
@@ -101,13 +106,17 @@ export const TracingGame: React.FC<TracingGameProps> = ({ item, onComplete, spea
           mCtx.fillText(item.text, (width * dpr)/2, (height * dpr)/2 + (fontSize * 0.05));
 
           // Calculate Total Pixels in Shape
-          const imgData = mCtx.getImageData(0, 0, maskCanvasRef.current.width, maskCanvasRef.current.height);
-          let count = 0;
-          // Sample every 4th pixel (step 16 in array) for speed
-          for(let i = 3; i < imgData.data.length; i += 16) {
-              if (imgData.data[i] > 128) count++;
+          try {
+            const imgData = mCtx.getImageData(0, 0, maskCanvasRef.current.width, maskCanvasRef.current.height);
+            let count = 0;
+            // Sample every 4th pixel (step 16 in array) for speed
+            for(let i = 3; i < imgData.data.length; i += 16) {
+                if (imgData.data[i] > 128) count++;
+            }
+            totalShapePixels.current = count;
+          } catch (e) {
+            console.error("Error calculating shape pixels:", e);
           }
-          totalShapePixels.current = count;
       }
       
       // Clear user logic canvas
@@ -115,14 +124,18 @@ export const TracingGame: React.FC<TracingGameProps> = ({ item, onComplete, spea
       if(uCtx) uCtx.clearRect(0,0, userLogicCanvasRef.current.width, userLogicCanvasRef.current.height);
     };
 
-    resizeAndDraw();
-    window.addEventListener('resize', resizeAndDraw);
+    // Use ResizeObserver to handle container sizing updates reliably
+    const resizeObserver = new ResizeObserver(() => {
+        resizeAndDraw();
+    });
+    
+    resizeObserver.observe(container);
     
     // Announce
     const timeout = setTimeout(() => speak(`Vamos desenhar: ${item.spokenText || item.text}`), 500);
 
     return () => {
-      window.removeEventListener('resize', resizeAndDraw);
+      resizeObserver.disconnect();
       clearTimeout(timeout);
     };
   }, [item, speak]);
@@ -132,7 +145,6 @@ export const TracingGame: React.FC<TracingGameProps> = ({ item, onComplete, spea
     if (!canvas) return { x: 0, y: 0 };
     
     const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
     
     let clientX, clientY;
     if ('touches' in e) {
@@ -198,6 +210,10 @@ export const TracingGame: React.FC<TracingGameProps> = ({ item, onComplete, spea
       // Validate Score
       const w = maskCanvasRef.current.width;
       const h = maskCanvasRef.current.height;
+      
+      // Safety check
+      if (w === 0 || h === 0) return;
+
       const mCtx = maskCanvasRef.current.getContext('2d');
       const uCtx = userLogicCanvasRef.current.getContext('2d');
 
