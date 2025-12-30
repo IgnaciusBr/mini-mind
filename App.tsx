@@ -40,7 +40,8 @@ import {
   Home,
   ArrowLeft,
   ArrowRight,
-  Pencil // Added Pencil Icon
+  Pencil, // Added Pencil Icon
+  PawPrint // Added PawPrint Icon
 } from 'lucide-react';
 
 interface MemoryCardState {
@@ -845,31 +846,36 @@ const App: React.FC = () => {
                         
                         <div className="grid grid-cols-2 gap-4 w-full max-w-2xl">
                              <HomeCard 
-                                title="123 Números" 
-                                color="bg-blue-400" 
-                                shadow="shadow-blue-200" 
-                                icon={<Hash size={48} className="text-white/90" />} 
+                                title="Números" 
+                                gradient="bg-gradient-to-br from-cyan-400 to-blue-500" 
+                                shadowColor="shadow-blue-200"
+                                content={<span className="text-6xl font-black text-white drop-shadow-md">123</span>} 
                                 onClick={() => selectContentType(ContentType.NUMBERS)} 
                              />
                              <HomeCard 
-                                title="ABC Alfabeto" 
-                                color="bg-green-400" 
-                                shadow="shadow-green-200" 
-                                icon={<Type size={48} className="text-white/90" />} 
+                                title="Alfabeto" 
+                                gradient="bg-gradient-to-br from-lime-400 to-green-500" 
+                                shadowColor="shadow-green-200"
+                                content={<span className="text-6xl font-black text-white drop-shadow-md">ABC</span>} 
                                 onClick={() => selectContentType(ContentType.ALPHABET)} 
                              />
                              <HomeCard 
-                                title="AEIOU Vogais" 
-                                color="bg-purple-400" 
-                                shadow="shadow-purple-200" 
-                                icon={<Volume2 size={48} className="text-white/90" />} 
+                                title="Vogais" 
+                                gradient="bg-gradient-to-br from-fuchsia-400 to-purple-500" 
+                                shadowColor="shadow-purple-200"
+                                content={
+                                    <div className="flex flex-col items-center leading-none">
+                                        <span className="text-4xl font-black text-white drop-shadow-md tracking-tighter">AEI</span>
+                                        <span className="text-4xl font-black text-white drop-shadow-md tracking-tighter">OU</span>
+                                    </div>
+                                } 
                                 onClick={() => selectContentType(ContentType.VOWELS)} 
                              />
                              <HomeCard 
                                 title="Animais" 
-                                color="bg-yellow-400" 
-                                shadow="shadow-yellow-200" 
-                                icon={<Cat size={48} className="text-white/90" />} 
+                                gradient="bg-gradient-to-br from-amber-400 to-orange-500" 
+                                shadowColor="shadow-orange-200"
+                                content={<PawPrint size={56} className="text-white drop-shadow-md" />} 
                                 onClick={() => selectContentType(ContentType.ANIMALS)} 
                              />
                         </div>
@@ -1101,19 +1107,38 @@ const SidebarBtn: React.FC<{ active: boolean; onClick: () => void; icon: React.R
   </button>
 );
 
-const HomeCard: React.FC<{ title: string; color: string; shadow: string; icon: React.ReactNode; onClick: () => void }> = ({ title, color, shadow, icon, onClick }) => (
+const HomeCard: React.FC<{ 
+    title: string; 
+    gradient: string; 
+    shadowColor: string; 
+    content: React.ReactNode; 
+    onClick: () => void 
+}> = ({ title, gradient, shadowColor, content, onClick }) => (
     <button 
         onClick={onClick}
-        className={`w-full aspect-[4/3] rounded-3xl ${color} ${shadow} shadow-lg flex flex-col items-center justify-center gap-3 text-white hover:scale-[1.03] active:scale-95 transition-all relative overflow-hidden group`}
+        className={`
+            w-full aspect-[4/3] rounded-[2rem] 
+            ${gradient} 
+            shadow-[0_10px_0_0_rgba(0,0,0,0.1)] 
+            active:shadow-none active:translate-y-[10px] 
+            border-b-[8px] border-black/10
+            flex flex-col items-center justify-center gap-2 
+            text-white transition-all relative overflow-hidden group
+        `}
     >
-        {/* Decorative Circles */}
-        <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -mr-8 -mt-8 pointer-events-none group-hover:scale-125 transition-transform" />
-        <div className="absolute bottom-0 left-0 w-16 h-16 bg-black/5 rounded-full -ml-6 -mb-6 pointer-events-none" />
+        {/* Glossy overlay */}
+        <div className="absolute top-0 left-0 w-full h-1/2 bg-white/20 rounded-t-[2rem] pointer-events-none" />
         
-        <div className="drop-shadow-sm transform group-hover:-rotate-6 transition-transform duration-300">
-            {icon}
+        {/* Content */}
+        <div className="transform group-hover:scale-110 transition-transform duration-300 drop-shadow-md">
+            {content}
         </div>
-        <span className="text-xl font-black tracking-wide drop-shadow-md">{title}</span>
+        
+        <span className="text-lg md:text-xl font-black tracking-wide drop-shadow-sm z-10">{title}</span>
+
+        {/* Decorative Circles */}
+        <div className="absolute -bottom-4 -right-4 w-16 h-16 bg-white/10 rounded-full" />
+        <div className="absolute top-4 left-4 w-8 h-8 bg-white/10 rounded-full" />
     </button>
 );
 
