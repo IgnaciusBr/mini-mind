@@ -1,28 +1,18 @@
 
 import React, { useEffect, useState } from 'react';
 import { MemoryResult, QuizHistory, ContentType } from '../types';
-import { Trophy, Clock, AlertCircle, BarChart2, Calendar, Brain, List, Activity, TrendingUp, Loader2, Maximize2, X, Smartphone } from 'lucide-react';
+import { Trophy, Clock, AlertCircle, BarChart2, Calendar, Brain, List, Activity, TrendingUp, Loader2 } from 'lucide-react';
 import { db, auth } from '../firebase';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 
-interface DashboardProps {
-    onRequestLandscape: (allowed: boolean) => void;
-}
-
-export const Dashboard: React.FC<DashboardProps> = ({ onRequestLandscape }) => {
+export const Dashboard: React.FC = () => {
   const [memoryResults, setMemoryResults] = useState<MemoryResult[]>([]);
   const [quizHistory, setQuizHistory] = useState<QuizHistory | null>(null);
   const [loading, setLoading] = useState(true);
   
   // Dashboard Controls
-  const [memoryViewMode, setMemoryViewMode] = useState<'table' | 'chart'>('table');
+  const [memoryViewMode, setMemoryViewMode] = useState<'table' | 'chart'>('chart');
   const [selectedDifficulty, setSelectedDifficulty] = useState<number>(6); // Default 6 pairs
-  const [showChartModal, setShowChartModal] = useState(false);
-
-  // Manage Orientation Permission based on Modal State
-  useEffect(() => {
-    onRequestLandscape(showChartModal);
-  }, [showChartModal, onRequestLandscape]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -166,15 +156,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onRequestLandscape }) => {
                 Histórico da Memória
             </h3>
 
-            <div className="flex flex-wrap items-center gap-2 bg-white p-1 rounded-xl border border-slate-200 shadow-sm w-full md:w-auto justify-between md:justify-end">
+            <div className="flex flex-wrap items-center gap-2 bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
                 {/* Difficulty Selector */}
-                <div className="flex bg-slate-100 rounded-lg p-1 overflow-x-auto">
+                <div className="flex bg-slate-100 rounded-lg p-1">
                     {[6, 8, 10, 15].map(diff => (
                         <button
                             key={diff}
                             onClick={() => setSelectedDifficulty(diff)}
                             className={`
-                                px-3 py-1.5 rounded-md text-xs font-bold transition-all whitespace-nowrap
+                                px-3 py-1.5 rounded-md text-xs font-bold transition-all
                                 ${selectedDifficulty === diff 
                                     ? 'bg-white text-blue-600 shadow-sm' 
                                     : 'text-slate-500 hover:text-slate-700'
@@ -186,10 +176,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onRequestLandscape }) => {
                     ))}
                 </div>
 
-                <div className="w-px h-6 bg-slate-200 mx-1 hidden md:block"></div>
+                <div className="w-px h-6 bg-slate-200 mx-1"></div>
 
-                {/* View Toggle (Desktop Only) */}
-                <div className="hidden md:flex bg-slate-100 rounded-lg p-1">
+                {/* View Toggle */}
+                <div className="flex bg-slate-100 rounded-lg p-1">
                     <button 
                         onClick={() => setMemoryViewMode('chart')}
                         className={`p-1.5 rounded-md transition-all ${memoryViewMode === 'chart' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}
@@ -217,230 +207,242 @@ export const Dashboard: React.FC<DashboardProps> = ({ onRequestLandscape }) => {
                 Nenhum resultado encontrado para a dificuldade selecionada ({selectedDifficulty} pares).
             </div>
         ) : (
-            <div className="space-y-4">
+            <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden min-h-[400px]">
                 
-                {/* Mobile Button for Fullscreen Chart */}
-                <button 
-                    onClick={() => setShowChartModal(true)}
-                    className="w-full md:hidden bg-gradient-to-r from-blue-500 to-indigo-600 text-white p-4 rounded-2xl shadow-lg flex items-center justify-center gap-2 font-bold hover:scale-[1.02] active:scale-95 transition-all"
-                >
-                    <Activity size={20} />
-                    Ver Gráfico de Evolução
-                </button>
-
-                <div className={`bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden min-h-[400px] ${memoryViewMode === 'chart' ? 'hidden md:block' : ''}`}>
-                    
-                    {/* Always show Table on Mobile (unless modal open), Chart or Table on Desktop based on toggle */}
-                    {(memoryViewMode === 'table' || window.innerWidth < 768) && (
-                        /* --- TABLE VIEW --- */
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-sm text-left text-slate-600">
-                                <thead className="text-xs text-slate-400 uppercase bg-slate-50 border-b border-slate-100">
-                                    <tr>
-                                        <th className="px-6 py-4 font-bold">Data</th>
-                                        <th className="px-6 py-4 font-bold text-center">Tempo</th>
-                                        <th className="px-6 py-4 font-bold text-center">Erros</th>
-                                        <th className="px-6 py-4 font-bold text-center">Pontuação</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {/* Reverse for table to show newest first */}
-                                    {[...filteredMemoryResults].reverse().map((result) => {
-                                        const score = calculateScore(result.timeSeconds, result.errors, result.difficulty);
-                                        return (
-                                            <tr key={result.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                                                <td className="px-6 py-4 flex items-center gap-2">
-                                                    <Calendar size={14} className="text-slate-400"/>
-                                                    {formatDate(result.date)}
-                                                </td>
-                                                <td className="px-6 py-4 text-center font-mono bg-slate-50/50">
-                                                    {formatTime(result.timeSeconds)}
-                                                </td>
-                                                <td className="px-6 py-4 text-center">
-                                                    <span className={`px-2 py-1 rounded-md font-bold ${result.errors === 0 ? 'bg-green-100 text-green-600' : 'bg-red-50 text-red-500'}`}>
-                                                        {result.errors}
-                                                    </span>
-                                                </td>
-                                                <td className="px-6 py-4 text-center">
-                                                    <span className="font-bold text-blue-600 font-mono text-base">{score.toLocaleString()}</span>
-                                                </td>
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
-                        </div>
-                    )}
-                    
-                    {/* Desktop Inline Chart */}
-                    {memoryViewMode === 'chart' && (
-                        <div className="p-4 md:p-8 w-full h-[400px] flex justify-center hidden md:flex">
-                           <PerformanceChart data={filteredMemoryResults} difficulty={selectedDifficulty} />
-                        </div>
-                    )}
-                </div>
+                {memoryViewMode === 'table' ? (
+                    /* --- TABLE VIEW --- */
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm text-left text-slate-600">
+                            <thead className="text-xs text-slate-400 uppercase bg-slate-50 border-b border-slate-100">
+                                <tr>
+                                    <th className="px-6 py-4 font-bold">Data</th>
+                                    <th className="px-6 py-4 font-bold text-center">Tempo</th>
+                                    <th className="px-6 py-4 font-bold text-center">Erros</th>
+                                    <th className="px-6 py-4 font-bold text-center">Pontuação</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {/* Reverse for table to show newest first */}
+                                {[...filteredMemoryResults].reverse().map((result) => {
+                                    const score = calculateScore(result.timeSeconds, result.errors, result.difficulty);
+                                    return (
+                                        <tr key={result.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                                            <td className="px-6 py-4 flex items-center gap-2">
+                                                <Calendar size={14} className="text-slate-400"/>
+                                                {formatDate(result.date)}
+                                            </td>
+                                            <td className="px-6 py-4 text-center font-mono bg-slate-50/50">
+                                                {formatTime(result.timeSeconds)}
+                                            </td>
+                                            <td className="px-6 py-4 text-center">
+                                                <span className={`px-2 py-1 rounded-md font-bold ${result.errors === 0 ? 'bg-green-100 text-green-600' : 'bg-red-50 text-red-500'}`}>
+                                                    {result.errors}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4 text-center">
+                                                <span className="font-bold text-blue-600 font-mono text-base">{score.toLocaleString()}</span>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                ) : (
+                    /* --- CHART VIEW --- */
+                    <div className="p-4 md:p-8 w-full h-[400px] flex justify-center">
+                       <PerformanceChart data={filteredMemoryResults} difficulty={selectedDifficulty} />
+                    </div>
+                )}
             </div>
         )}
       </section>
-
-      {/* --- Fullscreen Chart Modal --- */}
-      {showChartModal && (
-        <div className="fixed inset-0 z-[110] bg-white flex flex-col animate-in fade-in slide-in-from-bottom-4">
-            <div className="p-4 border-b border-slate-100 flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-2">
-                    <Activity className="text-blue-500" />
-                    <h3 className="font-black text-slate-700">Evolução ({selectedDifficulty} Pares)</h3>
-                </div>
-                <button 
-                    onClick={() => setShowChartModal(false)}
-                    className="p-2 bg-slate-100 rounded-full text-slate-500 hover:bg-slate-200 transition-colors"
-                >
-                    <X size={24} />
-                </button>
-            </div>
-            
-            <div className="flex-1 w-full h-full p-4 relative bg-slate-50/50">
-                 {/* Prompt to rotate if in portrait */}
-                 <div className="md:hidden absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-slate-800/80 backdrop-blur text-white px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 shadow-lg landscape:hidden">
-                    <Smartphone size={14} className="rotate-90" />
-                    Gire a tela para ver melhor
-                 </div>
-
-                 {filteredMemoryResults.length < 2 ? (
-                    <div className="flex flex-col items-center justify-center h-full text-slate-400">
-                        <Activity size={48} className="mb-4 opacity-30" />
-                        <p>Jogue mais partidas para ver o gráfico!</p>
-                    </div>
-                 ) : (
-                    <PerformanceChart data={filteredMemoryResults} difficulty={selectedDifficulty} />
-                 )}
-            </div>
-        </div>
-      )}
 
     </div>
   );
 };
 
 // --- MATH LOGIC: Inverse Efficiency Model (Hyperbola) ---
+// S = K / (T + (E * P) + 1)
 const calculateScore = (time: number, errors: number, difficulty: number) => {
+    // K (Maximum Constant): Scales with difficulty.
     const K = difficulty * 10000;
+    
+    // P (Penalty): 10 seconds per error.
     const P = 10;
+    
     const cost = time + (errors * P) + 1;
     const score = Math.round(K / cost);
     return score;
 };
 
-// --- Sub-Component: Improved Bezier Chart ---
+// --- Sub-Component: Custom SVG Chart ---
 const PerformanceChart: React.FC<{ data: MemoryResult[], difficulty: number }> = ({ data, difficulty }) => {
-    // Only show last 20 games
+    // Only show last 20 games to keep chart readable
     const chartData = data.slice(-20);
     
-    if (chartData.length < 2) return null;
+    if (chartData.length < 2) {
+        return (
+            <div className="w-full h-full flex flex-col items-center justify-center text-slate-400">
+                <BarChart2 size={48} className="mb-2 opacity-50" />
+                <p>Jogue mais partidas neste nível para ver o gráfico de evolução.</p>
+            </div>
+        );
+    }
 
     // Dimensions
     const width = 100; // viewBox units
-    const height = 50; // Widescreen aspect ratio for better look
-    const padding = 8;
+    const height = 100; 
+    const padding = 12;
     const graphWidth = width - (padding * 2);
     const graphHeight = height - (padding * 2);
 
-    // Calculate Scores
-    const scores = chartData.map(d => calculateScore(d.timeSeconds, d.errors, difficulty));
-    const maxScore = Math.max(...scores) * 1.1; // Add 10% headroom
-    const minScore = Math.min(...scores) * 0.9;
-
-    // X Coordinates generator
-    const getX = (index: number) => padding + (index * (graphWidth / (chartData.length - 1)));
+    // Dynamic Scales based on data
+    const maxTime = Math.max(...chartData.map(d => d.timeSeconds), 30); 
+    const maxErrors = Math.max(...chartData.map(d => d.errors), 5);
     
-    // Y Coordinates generator (Inverted)
-    const getY = (score: number) => (height - padding) - (((score - minScore) / (maxScore - minScore)) * graphHeight);
+    // Calculate Max Score dynamically to scale Y axis correctly
+    const scores = chartData.map(d => calculateScore(d.timeSeconds, d.errors, difficulty));
+    const maxScore = Math.max(...scores, 1000); 
 
-    // Generate Points
-    const points = scores.map((score, i) => ({ x: getX(i), y: getY(score), val: score, data: chartData[i] }));
-
-    // Generate Smooth Path (Catmull-Rom or Cubic Bezier)
-    // Simple logic: Control points are midway between points X, but flat at current Y? No, standard smoothing.
-    const generatePath = (pts: typeof points) => {
-        if (pts.length === 0) return "";
-        let d = `M ${pts[0].x} ${pts[0].y}`;
-        
-        for (let i = 0; i < pts.length - 1; i++) {
-            const p0 = pts[i];
-            const p1 = pts[i + 1];
-            
-            // Control points for simple curve
-            const cp1x = p0.x + (p1.x - p0.x) / 2;
-            const cp1y = p0.y;
-            const cp2x = p0.x + (p1.x - p0.x) / 2; // Midpoint X
-            const cp2y = p1.y;
-
-            d += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p1.x} ${p1.y}`;
-        }
-        return d;
-    };
-
-    const linePath = generatePath(points);
-    const areaPath = `${linePath} L ${points[points.length-1].x} ${height - padding} L ${points[0].x} ${height - padding} Z`;
+    // X Scale: index based
+    const stepX = graphWidth / (chartData.length - 1 || 1);
+    
+    // Bar Widths (Visual)
+    const barW = Math.min(stepX * 0.3, 3); // Max width 3 units to prevent looking too chunky
+    const halfBarW = barW / 2;
 
     return (
         <div className="w-full h-full flex flex-col">
-            <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible" preserveAspectRatio="none">
-                <defs>
-                    <linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#3B82F6" stopOpacity="0.4" />
-                        <stop offset="100%" stopColor="#3B82F6" stopOpacity="0" />
-                    </linearGradient>
-                    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-                         <feGaussianBlur stdDeviation="1" result="blur" />
-                         <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                    </filter>
-                </defs>
+            <div className="flex items-center justify-between mb-4 text-xs font-bold px-4">
+                 <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                        <span className="w-3 h-3 bg-gradient-to-b from-blue-400 to-blue-600 rounded-sm shadow-sm"></span>
+                        <span className="text-blue-600">Tempo (s)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                         <span className="w-3 h-3 bg-gradient-to-b from-rose-400 to-rose-600 rounded-sm shadow-sm"></span>
+                         <span className="text-rose-600">Erros</span>
+                    </div>
+                 </div>
+                 <div className="flex items-center gap-2 text-amber-600 bg-amber-50 px-2 py-1 rounded-lg border border-amber-100">
+                    <TrendingUp size={14} /> Pontuação (Pts)
+                 </div>
+            </div>
 
-                {/* Grid Lines */}
-                <line x1={padding} y1={padding} x2={width-padding} y2={padding} stroke="#E2E8F0" strokeWidth="0.2" strokeDasharray="1" />
-                <line x1={padding} y1={height/2} x2={width-padding} y2={height/2} stroke="#E2E8F0" strokeWidth="0.2" strokeDasharray="1" />
-                <line x1={padding} y1={height-padding} x2={width-padding} y2={height-padding} stroke="#E2E8F0" strokeWidth="0.2" />
+            <div className="relative flex-1 w-full border-l border-b border-slate-200 px-10 md:px-12 pb-4">
+                {/* Y Axis Labels (Left - Time) */}
+                <div className="absolute left-0 top-0 bottom-4 flex flex-col justify-between text-[10px] text-blue-400 py-2 text-right w-8 font-bold">
+                    <span>{Math.round(maxTime)}s</span>
+                    <span>{Math.round(maxTime / 2)}s</span>
+                    <span>0s</span>
+                </div>
+                
+                {/* Y Axis Labels (Right - Score) */}
+                 <div className="absolute right-0 top-0 bottom-4 flex flex-col justify-between text-[10px] text-amber-600 py-2 text-left w-8 font-bold">
+                    <span>{Math.round(maxScore/1000)}k</span>
+                    <span>{Math.round(maxScore/2000)}k</span>
+                    <span>0</span>
+                </div>
 
-                {/* Area Fill */}
-                <path d={areaPath} fill="url(#chartFill)" />
+                <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible" preserveAspectRatio="none">
+                    <defs>
+                        <linearGradient id="timeGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#60A5FA" />
+                            <stop offset="100%" stopColor="#3B82F6" />
+                        </linearGradient>
+                        <linearGradient id="errorGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#FB7185" />
+                            <stop offset="100%" stopColor="#E11D48" />
+                        </linearGradient>
+                         <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+                            <feDropShadow dx="0" dy="1" stdDeviation="1" floodColor="#000000" floodOpacity="0.2"/>
+                        </filter>
+                    </defs>
 
-                {/* Line */}
-                <path d={linePath} fill="none" stroke="#3B82F6" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+                    {/* Grid Lines */}
+                    <line x1={padding} y1={padding} x2={width-padding} y2={padding} stroke="#E2E8F0" strokeWidth="0.5" strokeDasharray="2" />
+                    <line x1={padding} y1={height/2} x2={width-padding} y2={height/2} stroke="#E2E8F0" strokeWidth="0.5" strokeDasharray="2" />
 
-                {/* Data Points */}
-                {points.map((p, i) => (
-                    <g key={i} className="group cursor-pointer">
-                        {/* Interactive Area */}
-                        <circle cx={p.x} cy={p.y} r="3" fill="transparent" />
+                    {chartData.map((d, i) => {
+                        const x = padding + (i * stepX);
                         
-                        {/* Visual Dot */}
-                        <circle 
-                            cx={p.x} 
-                            cy={p.y} 
-                            r="1.2" 
-                            fill="#FFFFFF" 
-                            stroke="#2563EB" 
-                            strokeWidth="0.5" 
-                            className="transition-all duration-300 group-hover:r-2"
-                        />
+                        // Calculate Heights (Inverted Y)
+                        const timeH = (d.timeSeconds / maxTime) * graphHeight;
+                        const errorH = (d.errors / maxErrors) * graphHeight;
                         
-                        {/* Tooltip on Hover */}
-                        <foreignObject x={p.x - 10} y={p.y - 12} width="20" height="10" className="opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none overflow-visible">
-                            <div className="flex flex-col items-center">
-                                <div className="bg-slate-800 text-white text-[3px] px-1 py-0.5 rounded shadow-lg whitespace-nowrap z-50">
-                                    {p.val.toLocaleString()} pts
-                                </div>
-                                <div className="w-0 h-0 border-l-[1px] border-l-transparent border-r-[1px] border-r-transparent border-t-[1px] border-t-slate-800"></div>
-                            </div>
-                        </foreignObject>
-                    </g>
-                ))}
-            </svg>
-            
-            <div className="flex justify-between px-4 mt-2 text-xs font-bold text-slate-400">
-                <span>Partidas Anteriores</span>
-                <span>Mais Recente</span>
+                        const score = calculateScore(d.timeSeconds, d.errors, difficulty);
+                        const scoreY = (height - padding) - ((score / maxScore) * graphHeight);
+
+                        // Previous point for line
+                        const prevD = i > 0 ? chartData[i-1] : null;
+                        const prevX = i > 0 ? padding + ((i-1) * stepX) : x;
+                        
+                        let prevScoreY = scoreY;
+                        if (prevD) {
+                            const prevScore = calculateScore(prevD.timeSeconds, prevD.errors, difficulty);
+                            prevScoreY = (height - padding) - ((prevScore / maxScore) * graphHeight);
+                        }
+
+                        return (
+                            <g key={d.id} className="group">
+                                {/* Time Bar (Blue Gradient) - Placed to the left of center */}
+                                <rect 
+                                    x={x - barW - 0.5} 
+                                    y={(height - padding) - timeH} 
+                                    width={barW} 
+                                    height={timeH} 
+                                    fill="url(#timeGradient)" 
+                                    rx="1"
+                                    className="transition-all duration-300 hover:opacity-80"
+                                />
+                                
+                                {/* Error Bar (Red Gradient) - Placed to the right of center */}
+                                <rect 
+                                    x={x + 0.5} 
+                                    y={(height - padding) - errorH} 
+                                    width={barW} 
+                                    height={errorH} 
+                                    fill="url(#errorGradient)" 
+                                    rx="1"
+                                    className="transition-all duration-300 hover:opacity-80"
+                                />
+
+                                {/* Score Line Segment */}
+                                {i > 0 && (
+                                    <line 
+                                        x1={prevX} y1={prevScoreY} 
+                                        x2={x} y2={scoreY} 
+                                        stroke="#D97706" 
+                                        strokeWidth="1.5" 
+                                        strokeLinecap="round"
+                                        filter="url(#shadow)"
+                                    />
+                                )}
+                                {/* Score Point */}
+                                <circle 
+                                    cx={x} 
+                                    cy={scoreY} 
+                                    r="2.5" 
+                                    fill="#F59E0B" 
+                                    stroke="white" 
+                                    strokeWidth="1" 
+                                    className="drop-shadow-md transition-all duration-300 group-hover:r-4" 
+                                />
+
+                                {/* Tooltip Area (Invisible rect for hover) */}
+                                <rect x={x - barW - 2} y={padding} width={(barW * 2) + 4} height={graphHeight} fill="transparent" className="cursor-pointer">
+                                    <title>{`Rodada ${i+1}\nPontuação: ${score}\nTempo: ${d.timeSeconds}s\nErros: ${d.errors}`}</title>
+                                </rect>
+                            </g>
+                        );
+                    })}
+                </svg>
+                
+                {/* X Axis Label */}
+                <div className="absolute bottom-0 left-0 right-0 text-center text-[10px] text-slate-400 font-medium">
+                    Histórico de Partidas (Antigo → Recente)
+                </div>
             </div>
         </div>
     );
