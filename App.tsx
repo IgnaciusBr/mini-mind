@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { ContentType, GameMode, COLORS, GameItem, PRONUNCIATION_MAP, MemoryResult, UserProfile } from './types';
+import { ContentType, GameMode, GameItem, PRONUNCIATION_MAP, MemoryResult, UserProfile } from './types';
 import { useSpeech } from './hooks/useSpeech';
+import { useGameData } from './hooks/useGameData';
 import Confetti, { ConfettiHandle } from './components/Confetti';
 import { GameButton } from './components/GameButton';
 import { MemoryCard } from './components/MemoryCard';
@@ -11,13 +12,14 @@ import { AuthScreen } from './components/AuthScreen';
 import { TracingGame } from './components/TracingGame';
 import { useAuth } from './context/AuthContext';
 import { VictoryScreen } from './components/VictoryScreen';
-import { SidebarBtn } from './components/SidebarBtn';
 import { HomeCard } from './components/HomeCard';
+import { Sidebar } from './components/Sidebar';
+import { Header } from './components/Header';
 import { calculateScore } from './utils/scoring';
 import { db } from './firebase';
 import { collection, getDocs, doc, setDoc, addDoc, increment } from 'firebase/firestore';
 import { 
-  Menu, X, Play, HelpCircle, Eye, Hash, Type, Volume2, Mic, Cat, Grid, Lock, LockOpen, LayoutDashboard, Clock, AlertCircle, Loader2, RotateCcw, Settings, LogOut, CheckCircle2, ArrowLeft, ArrowRight, Pencil, PawPrint 
+  LayoutDashboard, Clock, AlertCircle, Loader2, RotateCcw, Settings, LogOut, CheckCircle2, ArrowRight, Mic, PawPrint 
 } from 'lucide-react';
 
 interface MemoryCardState {
@@ -31,27 +33,30 @@ interface MemoryCardState {
 type ViewState = 'HOME' | 'GAME' | 'DASHBOARD' | 'SETTINGS';
 
 const App: React.FC = () => {
-  // --- Auth State from Context ---
+  // --- Auth State ---
   const { user, userProfile, loading: authLoading, setUserProfile, signOut } = useAuth();
   
   const [profileCompletionData, setProfileCompletionData] = useState({ name: '', age: '' });
   const [isCompletingProfile, setIsCompletingProfile] = useState(false);
 
-  // --- Game State ---
-  const [isLoadingAssets, setIsLoadingAssets] = useState(true);
-  const [dbAnimals, setDbAnimals] = useState<GameItem[]>([]);
-  const [view, setView] = useState<ViewState>('HOME'); // Start at HOME
+  // --- UI State ---
+  const [view, setView] = useState<ViewState>('HOME'); 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  
+  // --- Game Config State ---
   const [contentType, setContentType] = useState<ContentType>(ContentType.NUMBERS);
   const [gameMode, setGameMode] = useState<GameMode>(GameMode.EXPLORE);
-  const [items, setItems] = useState<GameItem[]>([]);
   const [displayStyle, setDisplayStyle] = useState<'standard' | 'alternate'>('standard');
   
+  // --- Data Hook ---
+  const { items, dbAnimals, isLoading: isLoadingAssets } = useGameData(contentType, displayStyle);
+
+  // --- Game Session State ---
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const [quizTarget, setQuizTarget] = useState<GameItem | null>(null);
   const [quizOptions, setQuizOptions] = useState<GameItem[]>([]);
   const [flashcardIndex, setFlashcardIndex] = useState(0);
-  const [tracingIndex, setTracingIndex] = useState(0); // For sequential tracing
+  const [tracingIndex, setTracingIndex] = useState(0);
   const [feedback, setFeedback] = useState<'correct' | 'wrong' | null>(null);
   const [blockInput, setBlockInput] = useState(false);
 
@@ -60,8 +65,7 @@ const App: React.FC = () => {
   const lockTapCount = useRef(0);
   const lockResetTimer = useRef<any>(null);
 
-  // Memory Game State
-  const [quizSessionStats, setQuizSessionStats] = useState({ correct: 0, wrong: 0 });
+  // --- Memory Game State ---
   const [memoryCards, setMemoryCards] = useState<MemoryCardState[]>([]);
   const [memoryDifficulty, setMemoryDifficulty] = useState<number>(6); 
   const [isMemorySetup, setIsMemorySetup] = useState(false); 
@@ -71,7 +75,6 @@ const App: React.FC = () => {
   const [isVictory, setIsVictory] = useState(false);
   const [lastResult, setLastResult] = useState<MemoryResult | null>(null);
   const [personalBest, setPersonalBest] = useState<number | null>(null);
-  // Local cache of memory results for calculating Personal Best without refetching every time
   const [memoryHistory, setMemoryHistory] = useState<MemoryResult[]>([]);
 
   const { speak, voices, selectedVoice, setSelectedVoice } = useSpeech();
@@ -80,16 +83,19 @@ const App: React.FC = () => {
   const memoryTimerRef = useRef<any>(null);
   const memoryPreviewTimeoutRef = useRef<any>(null);
 
-  // --- Initial Data Loading ---
+  // --- Effects ---
+
+  // Check Profile Completion
   useEffect(() => {
-    // If user is loaded but no profile, trigger profile completion
     if (user && !authLoading && !userProfile) {
         setIsCompletingProfile(true);
     } else {
         setIsCompletingProfile(false);
     }
-    
-    // Fetch History if user exists
+  }, [user, userProfile, authLoading]);
+
+  // Load Memory History
+  useEffect(() => {
     if (user) {
         const fetchHistory = async () => {
              const memoryRef = collection(db, "users", user.uid, "memory_results");
@@ -101,84 +107,9 @@ const App: React.FC = () => {
     } else {
         setMemoryHistory([]);
     }
+  }, [user]);
 
-    const initializeData = async () => {
-      try {
-        const querySnapshot = await getDocs(collection(db, "animals"));
-        const fetchedAnimals: GameItem[] = querySnapshot.docs.map(doc => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            text: data.name || "Sem nome",
-            spokenText: data.name,
-            color: '#E6DBBF',
-            image: data.image_url,
-            gender: data.gender || 'm'
-          };
-        });
-        setDbAnimals(fetchedAnimals);
-
-        const promises = fetchedAnimals.map((item) => {
-          if (!item.image) return Promise.resolve();
-          return new Promise((resolve) => {
-            const img = new Image();
-            img.src = item.image!;
-            img.onload = resolve;
-            img.onerror = resolve; 
-          });
-        });
-        await Promise.all(promises);
-      } catch (error) {
-        console.error("Erro ao carregar dados do Firebase:", error);
-      } finally {
-        setTimeout(() => setIsLoadingAssets(false), 500);
-      }
-    };
-    
-    initializeData();
-  }, [user, userProfile, authLoading]);
-
-  useEffect(() => {
-    setDisplayStyle('standard');
-  }, [contentType]);
-
-  useEffect(() => {
-    let newItems: GameItem[] = [];
-    const isAlt = displayStyle === 'alternate';
-
-    if (contentType === ContentType.NUMBERS) {
-      newItems = Array.from({length: 10}, (_, i) => {
-        const num = i + 1;
-        return {
-          id: `num-${num}`,
-          text: num.toString(),
-          spokenText: num.toString(), 
-          color: COLORS[i % COLORS.length]
-        };
-      });
-    } 
-    else if (contentType === ContentType.ANIMALS) {
-        const shuffled = [...dbAnimals].sort(() => Math.random() - 0.5);
-        newItems = shuffled.slice(0, 15);
-    }
-    else {
-      let data: string[] = [];
-      if (contentType === ContentType.VOWELS) data = ['A', 'E', 'I', 'O', 'U'];
-      else if (contentType === ContentType.ALPHABET) data = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split('');
-
-      newItems = data.map((char, i) => {
-        return {
-          id: `${contentType}-${i}`,
-          text: isAlt ? char.toLowerCase() : char,
-          spokenText: char, 
-          color: COLORS[i % COLORS.length]
-        };
-      });
-    }
-    setItems(newItems);
-  }, [contentType, displayStyle, dbAnimals]);
-
-  // Ensure consistent state if switching contents logic
+  // Mode Switching Logic
   useEffect(() => {
       // If switching to Animals from a Tracing mode, reset to explore or memory
       if (contentType === ContentType.ANIMALS && gameMode === GameMode.TRACING) {
@@ -188,8 +119,11 @@ const App: React.FC = () => {
       if (contentType !== ContentType.ANIMALS && gameMode === GameMode.MEMORY) {
           setGameMode(GameMode.EXPLORE);
       }
-  }, [contentType, gameMode]);
+      // Reset Display Style
+      setDisplayStyle('standard');
+  }, [contentType]);
 
+  // Game Reset Logic when Mode/Items change
   useEffect(() => {
     if (flashcardIntervalRef.current) clearInterval(flashcardIntervalRef.current);
     if (memoryTimerRef.current) clearInterval(memoryTimerRef.current);
@@ -200,7 +134,6 @@ const App: React.FC = () => {
     setActiveItemId(null); 
     setQuizTarget(null);
     if (gameMode !== GameMode.MEMORY) setIsMemorySetup(false); 
-    setQuizSessionStats({ correct: 0, wrong: 0 }); 
     setIsMemoryTimerActive(false);
     setIsVictory(false);
     setIsChildLocked(false);
@@ -210,10 +143,11 @@ const App: React.FC = () => {
     } else if (gameMode === GameMode.FLASHCARD) {
       startFlashcard(items);
     } else if (gameMode === GameMode.TRACING) {
-      setTracingIndex(0); // Always start sequence from 0
+      setTracingIndex(0);
     }
   }, [gameMode, items, view]);
 
+  // Memory Timer
   useEffect(() => {
     if (isMemoryTimerActive) {
         memoryTimerRef.current = setInterval(() => setMemoryTime(prev => prev + 1), 1000);
@@ -222,6 +156,8 @@ const App: React.FC = () => {
     }
     return () => clearInterval(memoryTimerRef.current);
   }, [isMemoryTimerActive]);
+
+  // --- Handlers ---
 
   const handleLogout = async () => {
       await signOut();
@@ -275,13 +211,7 @@ const App: React.FC = () => {
   };
 
   const saveQuizStats = async (isCorrect: boolean) => {
-    setQuizSessionStats(prev => ({
-        correct: prev.correct + (isCorrect ? 1 : 0),
-        wrong: prev.wrong + (isCorrect ? 0 : 1)
-    }));
-
     if (!user) return;
-
     try {
         const statsRef = doc(db, "users", user.uid, "stats", "quiz");
         await setDoc(statsRef, {
@@ -305,7 +235,6 @@ const App: React.FC = () => {
     };
 
     const allResults = [...memoryHistory, result];
-    
     const previousBestScore = memoryHistory
         .filter(r => r.difficulty === memoryDifficulty)
         .reduce((best, curr) => {
@@ -320,7 +249,6 @@ const App: React.FC = () => {
         addDoc(collection(db, "users", user.uid, "memory_results"), result)
             .catch(err => console.error("Error saving memory result:", err));
     }
-
     return result;
   };
 
@@ -328,7 +256,8 @@ const App: React.FC = () => {
   const getSpeakableText = (item: GameItem) => item.spokenText || item.text;
   const getArticle = (item: GameItem) => item.gender === 'f' ? 'a' : 'o';
 
-  // --- Game Control Functions ---
+  // --- Game Mechanics ---
+
   const startMemoryGame = (pairCount: number) => {
     if (memoryPreviewTimeoutRef.current) clearTimeout(memoryPreviewTimeoutRef.current);
     let sourceItems = contentType === ContentType.ANIMALS ? dbAnimals : items;
@@ -444,8 +373,6 @@ const App: React.FC = () => {
   const handleTracingComplete = () => {
       speak("Muito bem!");
       if (confettiRef.current) confettiRef.current.explode(window.innerWidth/2, window.innerHeight/2);
-      
-      // Delay before next item
       setTimeout(() => {
           setTracingIndex(prev => (prev + 1) % items.length);
       }, 1500);
@@ -486,21 +413,13 @@ const App: React.FC = () => {
     }
   };
 
-  // --- Navigation & View Logic ---
-  const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
-
+  // --- Helpers ---
   const selectContentType = (type: ContentType) => {
       setContentType(type);
       setGameMode(GameMode.EXPLORE);
       setView('GAME');
   };
 
-  const goHome = () => {
-      setView('HOME');
-      setIsSidebarOpen(false);
-  };
-  
-  // Helpers
   const getTitle = () => {
     if (view === 'DASHBOARD') return "Dashboard";
     if (view === 'SETTINGS') return "Configurações";
@@ -530,15 +449,12 @@ const App: React.FC = () => {
       return 'grid-cols-4 grid-rows-4 md:grid-cols-6 md:grid-rows-4';
   };
   
-  // Logic to determine if Toggle (ABC/abc) should be shown
-  // Show if: View is Game AND (Explore Mode OR (Tracing Mode AND Not Numbers))
-  // Hide if: Memory Mode OR Animals OR (Tracing Mode AND Numbers)
   const showToggle = view === 'GAME' 
     && contentType !== ContentType.ANIMALS 
     && gameMode !== GameMode.MEMORY
     && !(gameMode === GameMode.TRACING && contentType === ContentType.NUMBERS);
 
-  // --- Render Conditions ---
+  // --- Render ---
 
   if (authLoading || isLoadingAssets) {
     return (
@@ -551,21 +467,13 @@ const App: React.FC = () => {
                 <p className="text-xl font-bold text-slate-500 animate-pulse">
                     {authLoading ? 'Verificando usuário...' : 'Preparando a diversão...'}
                 </p>
-                {authLoading && (
-                     <button 
-                        onClick={() => window.location.reload()} 
-                        className="mt-4 text-xs font-bold text-slate-400 underline hover:text-slate-600"
-                    >
-                        Demorando muito? Recarregar
-                    </button>
-                )}
             </div>
         </div>
     );
   }
 
   if (!user) {
-      return <AuthScreen onLoginSuccess={() => {/* Managed by Auth Context state */}} />;
+      return <AuthScreen onLoginSuccess={() => {}} />;
   }
 
   if (isCompletingProfile) {
@@ -609,146 +517,37 @@ const App: React.FC = () => {
       );
   }
 
-  // --- Main App Render ---
-
   return (
-    // pb-safe adds Safe Area padding at the bottom
     <div className="relative w-screen h-screen overflow-hidden flex flex-col text-slate-700 bg-transparent pb-safe">
       <Confetti ref={confettiRef} />
       
-      {/* Sidebar - Only visible in GAME mode */}
       {view === 'GAME' && (
-        <>
-            <div className={`fixed inset-y-4 left-4 z-50 w-72 bg-white/90 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/50 transform transition-transform duration-300 ease-in-out flex flex-col md:absolute md:translate-x-0 md:h-auto md:m-0 md:rounded-3xl md:top-4 md:left-4 md:bottom-4 mb-safe ${isSidebarOpen ? 'translate-x-0' : '-translate-x-[120%]'}`}>
-                <div className="p-6 border-b border-slate-100/50 flex justify-between items-center h-24 shrink-0">
-                    <Logo className="h-14 w-auto" />
-                    <button onClick={toggleSidebar} className="md:hidden p-2 bg-slate-100 rounded-full text-slate-500"><X size={20} /></button>
-                </div>
-                
-                {/* Current Mode Indicator */}
-                <div className="px-4 pt-4">
-                    <div className="bg-blue-50 rounded-2xl p-4 border border-blue-100 text-center">
-                        <span className="text-xs font-bold text-blue-400 uppercase tracking-widest block mb-1">Modo Atual</span>
-                        <div className="font-black text-blue-600 text-lg flex items-center justify-center gap-2">
-                            {contentType === ContentType.NUMBERS && <Hash size={20} />}
-                            {contentType === ContentType.ALPHABET && <Type size={20} />}
-                            {contentType === ContentType.VOWELS && <Volume2 size={20} />}
-                            {contentType === ContentType.ANIMALS && <Cat size={20} />}
-                            <span>{contentType}</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-8">
-                <div>
-                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 ml-2">Modo de Jogo</h3>
-                    <div className="space-y-3">
-                        <SidebarBtn active={gameMode === GameMode.EXPLORE} onClick={() => { setGameMode(GameMode.EXPLORE); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Eye size={20} />} label="Explorar" colorClass="bg-orange-400 shadow-orange-200" />
-                        <SidebarBtn active={gameMode === GameMode.FLASHCARD} onClick={() => { setGameMode(GameMode.FLASHCARD); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Play size={20} />} label="Flashcards" colorClass="bg-pink-400 shadow-pink-200" />
-                        <SidebarBtn active={gameMode === GameMode.QUIZ} onClick={() => { setGameMode(GameMode.QUIZ); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<HelpCircle size={20} />} label="Quiz" colorClass="bg-teal-400 shadow-teal-200" />
-                        
-                        {/* Conditional Mode Button: Memory for Animals, Tracing for Others */}
-                        {contentType === ContentType.ANIMALS ? (
-                            <SidebarBtn active={gameMode === GameMode.MEMORY} onClick={() => { setGameMode(GameMode.MEMORY); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Grid size={20} />} label="Memória" colorClass="bg-indigo-400 shadow-indigo-200" />
-                        ) : (
-                            <SidebarBtn active={gameMode === GameMode.TRACING} onClick={() => { setGameMode(GameMode.TRACING); if(window.innerWidth<768) setIsSidebarOpen(false); }} icon={<Pencil size={20} />} label="Desenhar" colorClass="bg-indigo-400 shadow-indigo-200" />
-                        )}
-                    </div>
-                </div>
-                </div>
-            </div>
-            {isSidebarOpen && (<div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40 md:hidden" onClick={toggleSidebar} />)}
-        </>
+        <Sidebar 
+            isOpen={isSidebarOpen} 
+            toggle={() => setIsSidebarOpen(!isSidebarOpen)} 
+            contentType={contentType} 
+            gameMode={gameMode} 
+            setGameMode={setGameMode} 
+        />
       )}
       
-      {/* Main Content Area */}
       <main className={`flex-1 flex flex-col relative h-full transition-all duration-300 ${view === 'GAME' ? 'md:pl-[300px]' : 'pl-0'}`}>
         
-        {/* Header - Only visible in GAME, DASHBOARD, SETTINGS */}
-        {view !== 'HOME' && (
-            <header className="h-14 md:h-16 shrink-0 flex items-center justify-between px-4 z-20 pt-safe mt-2">
-            
-            {/* Navigation Group - Disabled when Child Locked */}
-            <div className={`flex items-center gap-3 transition-opacity duration-300 ${isChildLocked ? 'opacity-30 pointer-events-none' : 'opacity-100'}`}>
-                {/* Back Button */}
-                <button 
-                    onClick={goHome} 
-                    className="p-3 rounded-2xl bg-white shadow-lg shadow-slate-200/50 text-slate-600 hover:bg-slate-50 hover:scale-105 transition-all active:scale-95"
-                    aria-label="Voltar para o início"
-                    disabled={isChildLocked}
-                >
-                    <ArrowLeft size={20} strokeWidth={3} />
-                </button>
-
-                {/* Sidebar Toggle (Only GAME) */}
-                {view === 'GAME' && (
-                    <button 
-                        onClick={toggleSidebar} 
-                        className="p-3 rounded-2xl bg-white shadow-lg shadow-slate-200/50 text-slate-600 md:hidden active:scale-95 transition-transform"
-                        disabled={isChildLocked}
-                    >
-                        <Menu size={20} />
-                    </button>
-                )}
-            </div>
-
-            <div className="flex-1 flex justify-center items-center gap-4 mx-4 min-w-0">
-                 {/* Title hidden on mobile (hidden md:block) for ALL game modes to save space */}
-                <h1 className={`text-xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 drop-shadow-sm truncate px-4 py-2 ${view === 'GAME' ? 'hidden md:block' : 'block'}`}>{getTitle()}</h1>
-            </div>
-            
-            <div className="w-auto flex justify-end shrink-0 gap-3">
-                {/* Display Toggle - Disabled when Child Locked - Hidden if NUMBERS && TRACING */}
-                {showToggle && (
-                <div 
-                    className={`relative flex items-center bg-slate-100 rounded-full p-1 h-11 w-36 shadow-inner border border-slate-200 cursor-pointer transition-opacity duration-300 ${isChildLocked ? 'opacity-30 pointer-events-none' : 'opacity-100'}`}
-                    onClick={() => !isChildLocked && setDisplayStyle(prev => prev === 'standard' ? 'alternate' : 'standard')}
-                >
-                    <div 
-                        className={`absolute top-1 bottom-1 w-[calc(50%-4px)] bg-white rounded-full shadow-sm border border-slate-100 transition-transform duration-300 ease-out ${
-                            displayStyle === 'alternate' ? 'translate-x-full left-1' : 'translate-x-0 left-1'
-                        }`}
-                    />
-                    <div className={`flex-1 z-10 flex items-center justify-center transition-colors duration-300 ${displayStyle === 'standard' ? 'text-blue-500 font-black' : 'text-slate-400 font-bold'}`}>
-                        <span className="text-sm tracking-wider">{contentType === ContentType.NUMBERS ? '123' : 'ABC'}</span>
-                    </div>
-                    <div className="z-0 w-px h-4 bg-slate-300/50" />
-                    <div className={`flex-1 z-10 flex items-center justify-center transition-colors duration-300 ${displayStyle === 'alternate' ? 'text-blue-500 font-black' : 'text-slate-400 font-bold'}`}>
-                        {contentType === ContentType.NUMBERS ? (
-                            <div className="flex gap-1">
-                                <div className={`w-1.5 h-1.5 rounded-full ${displayStyle === 'alternate' ? 'bg-blue-500' : 'bg-slate-400'}`} />
-                                <div className={`w-1.5 h-1.5 rounded-full ${displayStyle === 'alternate' ? 'bg-blue-500' : 'bg-slate-400'}`} />
-                                <div className={`w-1.5 h-1.5 rounded-full ${displayStyle === 'alternate' ? 'bg-blue-500' : 'bg-slate-400'}`} />
-                            </div>
-                        ) : (
-                            <span className="text-sm tracking-wider">abc</span>
-                        )}
-                    </div>
-                </div>
-                )}
-
-                {/* Child Lock Button - Only visible in GAME */}
-                {view === 'GAME' && (
-                    <button 
-                        onClick={handleLockInteraction}
-                        className={`
-                            p-3 rounded-2xl shadow-lg transition-all active:scale-95 flex items-center justify-center
-                            ${isChildLocked 
-                                ? 'bg-red-500 text-white shadow-red-200' 
-                                : 'bg-white text-slate-400 shadow-slate-200/50 hover:text-blue-500'
-                            }
-                        `}
-                        aria-label={isChildLocked ? "Desbloquear tela" : "Bloquear tela"}
-                    >
-                        {isChildLocked ? <Lock size={20} strokeWidth={2.5} /> : <LockOpen size={20} strokeWidth={2.5} />}
-                    </button>
-                )}
-            </div>
-            </header>
-        )}
+        <Header 
+            view={view}
+            title={getTitle()}
+            goHome={() => { setView('HOME'); setIsSidebarOpen(false); }}
+            toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+            isChildLocked={isChildLocked}
+            handleLockInteraction={handleLockInteraction}
+            showToggle={showToggle}
+            contentType={contentType}
+            displayStyle={displayStyle}
+            setDisplayStyle={setDisplayStyle}
+        />
 
         <div className="flex-1 overflow-hidden relative p-2 md:p-4 flex flex-col items-center justify-center min-h-0">
-            {/* Mobile Quiz Header - Positioned below nav buttons (top of main area) */}
+            {/* Mobile Quiz Header */}
             {view === 'GAME' && gameMode === GameMode.QUIZ && quizTarget && (
                 <div className="w-full text-center py-2 md:hidden animate-in fade-in slide-in-from-top-2 shrink-0">
                      <span className="text-xl font-black text-slate-700 drop-shadow-sm">
@@ -759,7 +558,6 @@ const App: React.FC = () => {
 
             {view === 'HOME' && (
                 <div className="w-full h-full flex flex-col pt-safe">
-                    {/* Home Header */}
                     <div className="flex justify-between items-center px-4 py-4 md:px-8">
                          <div className="flex items-center gap-3">
                              <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-black border-2 border-white shadow-md">
