@@ -4,6 +4,7 @@ import { MemoryResult, QuizHistory, ContentType } from '../types';
 import { Trophy, Clock, AlertCircle, BarChart2, Calendar, Brain, List, Activity, TrendingUp, Loader2 } from 'lucide-react';
 import { db, auth } from '../firebase';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
+import { calculateScore } from '../utils/scoring';
 
 export const Dashboard: React.FC = () => {
   const [memoryResults, setMemoryResults] = useState<MemoryResult[]>([]);
@@ -260,20 +261,6 @@ export const Dashboard: React.FC = () => {
 
     </div>
   );
-};
-
-// --- MATH LOGIC: Inverse Efficiency Model (Hyperbola) ---
-// S = K / (T + (E * P) + 1)
-const calculateScore = (time: number, errors: number, difficulty: number) => {
-    // K (Maximum Constant): Scales with difficulty.
-    const K = difficulty * 10000;
-    
-    // P (Penalty): 10 seconds per error.
-    const P = 10;
-    
-    const cost = time + (errors * P) + 1;
-    const score = Math.round(K / cost);
-    return score;
 };
 
 // --- Sub-Component: Custom SVG Chart ---

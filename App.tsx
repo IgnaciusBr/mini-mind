@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { ContentType, GameMode, COLORS, GameItem, PRONUNCIATION_MAP, MemoryResult, QuizHistory, QuizStats, UserProfile } from './types';
+import { ContentType, GameMode, COLORS, GameItem, PRONUNCIATION_MAP, MemoryResult, UserProfile } from './types';
 import { useSpeech } from './hooks/useSpeech';
 import Confetti, { ConfettiHandle } from './components/Confetti';
 import { GameButton } from './components/GameButton';
@@ -8,40 +8,16 @@ import { MemoryCard } from './components/MemoryCard';
 import { Logo } from './components/Logo';
 import { Dashboard } from './components/Dashboard';
 import { AuthScreen } from './components/AuthScreen';
-import { TracingGame } from './components/TracingGame'; // New Component
-import { db, auth } from './firebase';
-import { collection, getDocs, doc, getDoc, setDoc, addDoc, query, where, increment } from 'firebase/firestore';
-import { onAuthStateChanged, signOut, User, setPersistence, browserLocalPersistence } from 'firebase/auth';
+import { TracingGame } from './components/TracingGame';
+import { useAuth } from './context/AuthContext';
+import { VictoryScreen } from './components/VictoryScreen';
+import { SidebarBtn } from './components/SidebarBtn';
+import { HomeCard } from './components/HomeCard';
+import { calculateScore } from './utils/scoring';
+import { db } from './firebase';
+import { collection, getDocs, doc, setDoc, addDoc, increment } from 'firebase/firestore';
 import { 
-  Menu, 
-  X,
-  Play,
-  HelpCircle,
-  Eye,
-  Hash,
-  Type,
-  Volume2,
-  Mic,
-  Cat,
-  Grid,
-  Lock,
-  LockOpen,
-  LayoutDashboard,
-  Clock,
-  AlertCircle,
-  Trophy,
-  Loader2,
-  RotateCcw,
-  Settings,
-  Calculator,
-  LogOut,
-  User as UserIcon,
-  CheckCircle2,
-  Home,
-  ArrowLeft,
-  ArrowRight,
-  Pencil, // Added Pencil Icon
-  PawPrint // Added PawPrint Icon
+  Menu, X, Play, HelpCircle, Eye, Hash, Type, Volume2, Mic, Cat, Grid, Lock, LockOpen, LayoutDashboard, Clock, AlertCircle, Loader2, RotateCcw, Settings, LogOut, CheckCircle2, ArrowLeft, ArrowRight, Pencil, PawPrint 
 } from 'lucide-react';
 
 interface MemoryCardState {
@@ -54,20 +30,10 @@ interface MemoryCardState {
 
 type ViewState = 'HOME' | 'GAME' | 'DASHBOARD' | 'SETTINGS';
 
-// --- MATH LOGIC: Inverse Efficiency Model (Hyperbola) ---
-const calculateScore = (time: number, errors: number, difficulty: number) => {
-    const K = difficulty * 10000;
-    const P = 10;
-    const cost = time + (errors * P) + 1;
-    const score = Math.round(K / cost);
-    return score;
-};
-
 const App: React.FC = () => {
-  // --- Auth State ---
-  const [user, setUser] = useState<User | null>(null);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
+  // --- Auth State from Context ---
+  const { user, userProfile, loading: authLoading, setUserProfile, signOut } = useAuth();
+  
   const [profileCompletionData, setProfileCompletionData] = useState({ name: '', age: '' });
   const [isCompletingProfile, setIsCompletingProfile] = useState(false);
 
@@ -114,45 +80,27 @@ const App: React.FC = () => {
   const memoryTimerRef = useRef<any>(null);
   const memoryPreviewTimeoutRef = useRef<any>(null);
 
-  // --- Auth & Initial Data Loading ---
+  // --- Initial Data Loading ---
   useEffect(() => {
-    // Configurar persistência local explícita
-    setPersistence(auth, browserLocalPersistence).catch(console.error);
-
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-        setUser(currentUser);
-        
-        if (currentUser) {
-            try {
-                // Fetch Profile
-                const docRef = doc(db, "users", currentUser.uid);
-                const docSnap = await getDoc(docRef);
-                
-                if (docSnap.exists()) {
-                    setUserProfile(docSnap.data() as UserProfile);
-                    setIsCompletingProfile(false);
-
-                    // Load Memory History for Personal Best calculation
-                    const memoryRef = collection(db, "users", currentUser.uid, "memory_results");
-                    const memorySnap = await getDocs(memoryRef);
-                    const history = memorySnap.docs.map(d => d.data() as MemoryResult);
-                    setMemoryHistory(history);
-
-                } else {
-                    // Profile doesn't exist (likely Google Login for first time)
-                    setUserProfile(null);
-                    setIsCompletingProfile(true);
-                }
-            } catch (error) {
-                console.error("Erro ao buscar perfil:", error);
-                await signOut(auth);
-            }
-        } else {
-            setUserProfile(null);
-            setMemoryHistory([]);
-        }
-        setAuthLoading(false);
-    });
+    // If user is loaded but no profile, trigger profile completion
+    if (user && !authLoading && !userProfile) {
+        setIsCompletingProfile(true);
+    } else {
+        setIsCompletingProfile(false);
+    }
+    
+    // Fetch History if user exists
+    if (user) {
+        const fetchHistory = async () => {
+             const memoryRef = collection(db, "users", user.uid, "memory_results");
+             const memorySnap = await getDocs(memoryRef);
+             const history = memorySnap.docs.map(d => d.data() as MemoryResult);
+             setMemoryHistory(history);
+        };
+        fetchHistory();
+    } else {
+        setMemoryHistory([]);
+    }
 
     const initializeData = async () => {
       try {
@@ -182,16 +130,13 @@ const App: React.FC = () => {
         await Promise.all(promises);
       } catch (error) {
         console.error("Erro ao carregar dados do Firebase:", error);
-        await signOut(auth);
       } finally {
         setTimeout(() => setIsLoadingAssets(false), 500);
       }
     };
     
     initializeData();
-
-    return () => unsubscribe();
-  }, []);
+  }, [user, userProfile, authLoading]);
 
   useEffect(() => {
     setDisplayStyle('standard');
@@ -279,13 +224,8 @@ const App: React.FC = () => {
   }, [isMemoryTimerActive]);
 
   const handleLogout = async () => {
-    try {
-        await signOut(auth);
-        setView('HOME');
-        window.location.reload();
-    } catch (error) {
-        console.error("Error signing out", error);
-    }
+      await signOut();
+      setView('HOME');
   };
 
   const handleCompleteProfile = async (e: React.FormEvent) => {
@@ -366,7 +306,6 @@ const App: React.FC = () => {
 
     const allResults = [...memoryHistory, result];
     
-    const currentScore = calculateScore(result.timeSeconds, result.errors, result.difficulty);
     const previousBestScore = memoryHistory
         .filter(r => r.difficulty === memoryDifficulty)
         .reduce((best, curr) => {
@@ -626,7 +565,7 @@ const App: React.FC = () => {
   }
 
   if (!user) {
-      return <AuthScreen onLoginSuccess={() => setAuthLoading(false)} />;
+      return <AuthScreen onLoginSuccess={() => {/* Managed by Auth Context state */}} />;
   }
 
   if (isCompletingProfile) {
@@ -1038,108 +977,5 @@ const App: React.FC = () => {
     </div>
   );
 };
-
-const VictoryScreen: React.FC<{ 
-    result: MemoryResult; 
-    best: number | null; 
-    onRetry: () => void; 
-    onSelectDifficulty: () => void;
-}> = ({ result, best, onRetry, onSelectDifficulty }) => {
-    const score = calculateScore(result.timeSeconds, result.errors, result.difficulty);
-    const isNewRecord = best === null || score > best; 
-
-    return (
-        <div className="absolute inset-0 z-[60] flex items-center justify-center p-4 md:p-8 animate-in zoom-in fade-in duration-300">
-            <div className="bg-white rounded-[2rem] shadow-2xl border-4 border-yellow-400 p-8 md:p-12 w-full max-w-lg text-center flex flex-col items-center gap-6 relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-pink-500 via-yellow-400 to-blue-500" />
-                <div className="bg-yellow-100 p-6 rounded-full text-yellow-600 animate-bounce">
-                    <Trophy size={64} />
-                </div>
-                <div>
-                    <h2 className="text-4xl font-black text-slate-700 mb-2">Parabéns!</h2>
-                    <p className="text-slate-500 font-medium">Você completou o desafio de {result.difficulty} pares!</p>
-                </div>
-                <div className="grid grid-cols-2 gap-4 w-full">
-                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest block mb-1">Tempo</span>
-                        <span className="text-2xl font-black text-slate-700 font-mono">
-                            {Math.floor(result.timeSeconds / 60)}:{(result.timeSeconds % 60).toString().padStart(2, '0')}
-                        </span>
-                    </div>
-                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest block mb-1">Erros</span>
-                        <span className="text-2xl font-black text-slate-700">{result.errors}</span>
-                    </div>
-                    <div className="col-span-2 bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-2xl border border-blue-100 flex items-center justify-between px-8">
-                        <div>
-                            <div className="flex items-center gap-1.5 mb-0.5">
-                                <Calculator size={14} className="text-blue-400" />
-                                <span className="text-xs font-bold text-blue-400 uppercase tracking-widest block text-left">Pontuação</span>
-                            </div>
-                            <span className="text-4xl font-black text-blue-600 tracking-tight">{score.toLocaleString()}</span>
-                        </div>
-                        {isNewRecord && (
-                            <div className="bg-yellow-400 text-white px-3 py-1 rounded-full text-xs font-black animate-pulse shadow-sm">NOVO RECORDE!</div>
-                        )}
-                        {!isNewRecord && best && (
-                            <div className="text-right">
-                                <span className="text-[10px] font-bold text-slate-400 block uppercase">Melhor</span>
-                                <span className="text-lg font-bold text-slate-500 font-mono">{best.toLocaleString()}</span>
-                            </div>
-                        )}
-                    </div>
-                </div>
-                <div className="flex flex-col w-full gap-3 mt-4">
-                    <button onClick={onRetry} className="w-full py-4 bg-blue-500 text-white rounded-2xl font-black text-xl shadow-lg shadow-blue-200 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3">
-                        <RotateCcw size={24} /> Jogar Novamente
-                    </button>
-                    <button onClick={onSelectDifficulty} className="w-full py-3 bg-slate-100 text-slate-500 rounded-2xl font-bold hover:bg-slate-200 transition-colors">Trocar Nível</button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const SidebarBtn: React.FC<{ active: boolean; onClick: () => void; icon: React.ReactNode; label: string; colorClass: string; disabled?: boolean; }> = ({ active, onClick, icon, label, colorClass, disabled = false }) => (
-  <button onClick={disabled ? undefined : onClick} disabled={disabled} className={`w-full flex items-center gap-4 px-4 py-4 rounded-2xl text-sm font-bold transition-all duration-200 ${disabled ? 'opacity-40 cursor-not-allowed bg-slate-50 text-slate-300' : ''} ${!disabled && active ? `${colorClass} text-white shadow-lg scale-105` : !disabled ? 'bg-slate-50 text-slate-400 hover:bg-slate-100 hover:text-slate-600 hover:scale-102' : ''}`}>
-    <div className={`${!disabled && active ? 'text-white' : disabled ? 'text-slate-300' : 'text-slate-400'}`}>{disabled ? <Lock size={20} /> : icon}</div>
-    <span className="tracking-wide">{label}</span>
-  </button>
-);
-
-const HomeCard: React.FC<{ 
-    title: string; 
-    gradient: string; 
-    shadowColor: string; 
-    content: React.ReactNode; 
-    onClick: () => void 
-}> = ({ title, gradient, shadowColor, content, onClick }) => (
-    <button 
-        onClick={onClick}
-        className={`
-            w-full aspect-[4/3] rounded-[2rem] 
-            ${gradient} 
-            shadow-[0_10px_0_0_rgba(0,0,0,0.1)] 
-            active:shadow-none active:translate-y-[10px] 
-            border-b-[8px] border-black/10
-            flex flex-col items-center justify-center gap-2 
-            text-white transition-all relative overflow-hidden group
-        `}
-    >
-        {/* Glossy overlay */}
-        <div className="absolute top-0 left-0 w-full h-1/2 bg-white/20 rounded-t-[2rem] pointer-events-none" />
-        
-        {/* Content */}
-        <div className="transform group-hover:scale-110 transition-transform duration-300 drop-shadow-md">
-            {content}
-        </div>
-        
-        <span className="text-lg md:text-xl font-black tracking-wide drop-shadow-sm z-10">{title}</span>
-
-        {/* Decorative Circles */}
-        <div className="absolute -bottom-4 -right-4 w-16 h-16 bg-white/10 rounded-full" />
-        <div className="absolute top-4 left-4 w-8 h-8 bg-white/10 rounded-full" />
-    </button>
-);
 
 export default App;
