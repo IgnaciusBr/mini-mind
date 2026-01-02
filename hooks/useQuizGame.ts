@@ -4,6 +4,7 @@ import { GameItem, ContentType } from '../types';
 import { db } from '../firebase';
 import { doc, setDoc, increment } from 'firebase/firestore';
 import { User } from 'firebase/auth';
+import { useAnalytics } from './useAnalytics';
 
 export const useQuizGame = (
   items: GameItem[], 
@@ -18,6 +19,7 @@ export const useQuizGame = (
   const [options, setOptions] = useState<GameItem[]>([]);
   const [feedback, setFeedback] = useState<'correct' | 'wrong' | null>(null);
   const [blockInput, setBlockInput] = useState(false);
+  const { trackLevelEnd, trackLevelStart } = useAnalytics();
 
   const startRound = useCallback(() => {
     if (items.length === 0) return;
@@ -32,7 +34,6 @@ export const useQuizGame = (
     const opts = [newTarget];
     const pool = items.filter(i => i.id !== newTarget.id);
     
-    // Max 3 options for small screens or complexity control, can be adjusted
     while(opts.length < 3 && pool.length > 0) {
       const idx = Math.floor(Math.random() * pool.length);
       opts.push(pool[idx]);
@@ -40,10 +41,12 @@ export const useQuizGame = (
     }
     setOptions(opts.sort(() => Math.random() - 0.5));
 
+    trackLevelStart('quiz_round', { target: newTarget.text, category: contentType });
+
     setTimeout(() => {
       speak(`Cadê ${getArticle(newTarget)} ${getPhonetic(getSpeakableText(newTarget))}?`, () => setBlockInput(false));
     }, 500);
-  }, [items, speak, getArticle, getPhonetic, getSpeakableText]);
+  }, [items, speak, getArticle, getPhonetic, getSpeakableText, contentType]);
 
   const saveStats = async (isCorrect: boolean) => {
     if (!user) return;
@@ -66,14 +69,16 @@ export const useQuizGame = (
     if (item.id === target.id) {
         setFeedback('correct');
         saveStats(true);
+        trackLevelEnd('quiz_round', true);
         setBlockInput(true);
         speak("Parabéns!", () => {
-            onCorrect(); // Trigger external effects like confetti
+            onCorrect(); 
             setTimeout(() => startRound(), 1000);
         });
     } else {
         setFeedback('wrong');
         saveStats(false);
+        trackLevelEnd('quiz_round', false);
         setBlockInput(true);
         const speakable = getSpeakableText(item);
         speak(`Não! Esse é ${getArticle(item)} ${getPhonetic(speakable)}.`, () => {

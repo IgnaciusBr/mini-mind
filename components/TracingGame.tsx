@@ -2,6 +2,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { GameItem } from '../types';
 import { Eraser, Pencil } from 'lucide-react';
+import { useAnalytics } from '../hooks/useAnalytics';
 
 interface TracingGameProps {
   item: GameItem;
@@ -24,7 +25,8 @@ export const TracingGame: React.FC<TracingGameProps> = ({ item, onComplete, spea
 
   const lastPos = useRef<{x: number, y: number} | null>(null);
   const totalShapePixels = useRef<number>(0);
-  const totalOutsidePixels = useRef<number>(0); // New ref to track total white area
+  const totalOutsidePixels = useRef<number>(0); 
+  const { trackLevelEnd } = useAnalytics();
 
   // Initialize Canvases and Guide
   useEffect(() => {
@@ -251,25 +253,15 @@ export const TracingGame: React.FC<TracingGameProps> = ({ item, onComplete, spea
           const insideCoverage = insideHits / totalShape;
           
           // Metric 2: How much of the WHITE AREA is painted?
-          // This is stricter than comparing misses to hits. 
-          // If you paint > 5% of the empty space, you fail.
           const outsideErrorPercentage = totalOutside > 0 ? (outsideMisses / totalOutside) : 0;
-          
-          // Logic Rules:
-          // 1. Must fill at least 70% of the letter
-          // 2. Must NOT paint more than 5% of the background
           
           const isCleanEnough = outsideErrorPercentage <= 0.05; 
           const isFilledEnough = insideCoverage > 0.70;
 
-          console.log(`Fill: ${(insideCoverage*100).toFixed(1)}%, Error: ${(outsideErrorPercentage*100).toFixed(1)}%`);
-
           if (isFilledEnough && isCleanEnough) {
+              trackLevelEnd('tracing', true);
               onComplete();
-          } else if (!isCleanEnough && isFilledEnough) {
-             // Optional: You could give feedback here like "Tente não riscar fora!"
-             // For now, silent fail implies "not done yet" or "needs correction"
-          }
+          } 
 
       } catch (e) {
           console.error(e);

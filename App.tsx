@@ -5,6 +5,7 @@ import { useSpeech } from './hooks/useSpeech';
 import { useGameData } from './hooks/useGameData';
 import { useQuizGame } from './hooks/useQuizGame';
 import { useFlashcardGame } from './hooks/useFlashcardGame';
+import { useAnalytics } from './hooks/useAnalytics'; // Analytics Import
 import Confetti, { ConfettiHandle } from './components/Confetti';
 import { GameButton } from './components/GameButton';
 import { Logo } from './components/Logo';
@@ -43,6 +44,7 @@ const App: React.FC = () => {
   // --- Hooks ---
   const { items, dbAnimals, isLoading: isLoadingAssets } = useGameData(contentType, displayStyle);
   const { speak, voices, selectedVoice, setSelectedVoice } = useSpeech();
+  const { trackScreen, trackSelectContent, logGameEvent } = useAnalytics(); // Analytics Hook
   
   // --- Helpers ---
   const getPhonetic = (text: string) => PRONUNCIATION_MAP[text.toUpperCase()] || text;
@@ -64,6 +66,13 @@ const App: React.FC = () => {
   useEffect(() => {
     setIsCompletingProfile(!!(user && !authLoading && !userProfile));
   }, [user, userProfile, authLoading]);
+
+  // Analytics: Track Screens
+  useEffect(() => {
+      let screenName: string = view;
+      if (view === 'GAME') screenName = `GAME_${contentType}_${gameMode}`;
+      trackScreen(screenName);
+  }, [view, contentType, gameMode]);
 
   // Reset Display Style only when content type changes
   useEffect(() => {
@@ -93,7 +102,11 @@ const App: React.FC = () => {
   }, [quiz.feedback]);
 
   // --- Handlers ---
-  const handleLogout = async () => { await signOut(); setView('HOME'); };
+  const handleLogout = async () => { 
+      logGameEvent('logout');
+      await signOut(); 
+      setView('HOME'); 
+  };
 
   const handleCompleteProfile = async (e: React.FormEvent) => {
       e.preventDefault();
@@ -104,6 +117,7 @@ const App: React.FC = () => {
           };
           await setDoc(doc(db, "users", user.uid), profile);
           setUserProfile(profile);
+          logGameEvent('tutorial_complete', { method: 'profile_setup' });
       } catch (err) { console.error(err); }
   };
 
@@ -126,6 +140,7 @@ const App: React.FC = () => {
       setActiveItemId(item.id);
       if (confettiRef.current) confettiRef.current.explode(x, y);
       speak(getSpeakableText(item));
+      trackSelectContent(contentType, item.text); // Analytics
     } 
     else if (gameMode === GameMode.QUIZ) {
       quiz.handleAnswer(item, () => { if (confettiRef.current) confettiRef.current.explode(x, y); });
@@ -141,7 +156,11 @@ const App: React.FC = () => {
   };
 
   // --- View Logic ---
-  const selectContentType = (type: ContentType) => { setContentType(type); setGameMode(GameMode.EXPLORE); setView('GAME'); };
+  const selectContentType = (type: ContentType) => { 
+      setContentType(type); 
+      setGameMode(GameMode.EXPLORE); 
+      setView('GAME'); 
+  };
 
   const getTitle = () => {
     if (view === 'DASHBOARD') return "Dashboard";

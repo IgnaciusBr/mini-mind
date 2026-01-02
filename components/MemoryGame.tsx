@@ -9,6 +9,7 @@ import { User } from 'firebase/auth';
 import { calculateScore } from '../utils/scoring';
 import { Clock, AlertCircle, Settings, RotateCcw } from 'lucide-react';
 import { ConfettiHandle } from './Confetti';
+import { useAnalytics } from '../hooks/useAnalytics';
 
 interface MemoryCardState {
     id: string; 
@@ -23,7 +24,7 @@ interface MemoryGameProps {
     user: User | null;
     speak: (text: string) => void;
     confettiRef: React.RefObject<ConfettiHandle>;
-    onExit: () => void; // Used to change mode if needed, though this component handles its own restart
+    onExit: () => void; 
 }
 
 export const MemoryGame: React.FC<MemoryGameProps> = ({ items, user, speak, confettiRef, onExit }) => {
@@ -47,6 +48,8 @@ export const MemoryGame: React.FC<MemoryGameProps> = ({ items, user, speak, conf
     const timerRef = useRef<any>(null);
     const previewTimeoutRef = useRef<any>(null);
 
+    const { trackLevelStart, trackLevelEnd } = useAnalytics();
+
     // Load History on Mount
     useEffect(() => {
         if (user) {
@@ -56,7 +59,7 @@ export const MemoryGame: React.FC<MemoryGameProps> = ({ items, user, speak, conf
         }
     }, [user]);
 
-    // Timer Logic - ISOLATED here! App.tsx doesn't re-render!
+    // Timer Logic
     useEffect(() => {
         if (isTimerActive) {
             timerRef.current = setInterval(() => setTime(prev => prev + 1), 1000);
@@ -90,6 +93,8 @@ export const MemoryGame: React.FC<MemoryGameProps> = ({ items, user, speak, conf
         setTime(0);
         setErrors(0);
         setIsTimerActive(false);
+
+        trackLevelStart('memory_game', { difficulty: pairCount });
     
         speak("Memorize as cartas!");
         previewTimeoutRef.current = setTimeout(() => {
@@ -154,6 +159,8 @@ export const MemoryGame: React.FC<MemoryGameProps> = ({ items, user, speak, conf
                     if (allMatched) {
                         setIsTimerActive(false);
                         const result = saveResult();
+                        const score = calculateScore(result.timeSeconds, result.errors, result.difficulty);
+                        trackLevelEnd('memory_game', true, score);
                         setLastResult(result);
                         setTimeout(() => {
                             setIsVictory(true);

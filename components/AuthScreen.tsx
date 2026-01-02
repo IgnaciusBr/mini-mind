@@ -6,6 +6,7 @@ import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { Logo } from './Logo';
 import { Loader2, Mail, Lock, User, Calendar, ArrowRight, LogIn } from 'lucide-react';
 import { UserProfile } from '../types';
+import { useAnalytics } from '../hooks/useAnalytics';
 
 interface AuthScreenProps {
   onLoginSuccess: () => void;
@@ -15,6 +16,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
   const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { logGameEvent } = useAnalytics();
 
   // Form State
   const [email, setEmail] = useState('');
@@ -34,8 +36,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       const docSnap = await getDoc(docRef);
 
       if (!docSnap.exists()) {
-        // If first time with Google, we will handle profile creation in the App.tsx 
-        // by detecting missing profile data.
+        logGameEvent('sign_up', { method: 'google' });
+      } else {
+        logGameEvent('login', { method: 'google' });
       }
       onLoginSuccess();
     } catch (err: any) {
@@ -54,6 +57,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
     try {
       if (isLogin) {
         await signInWithEmailAndPassword(auth, email, password);
+        logGameEvent('login', { method: 'email' });
         onLoginSuccess();
       } else {
         // Validation
@@ -74,6 +78,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
         };
 
         await setDoc(doc(db, "users", user.uid), profile);
+        logGameEvent('sign_up', { method: 'email' });
         onLoginSuccess();
       }
     } catch (err: any) {
