@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ContentType, GameMode, GameItem, PRONUNCIATION_MAP, UserProfile } from './types';
 import { useSpeech } from './hooks/useSpeech';
 import { useGameData } from './hooks/useGameData';
@@ -46,10 +46,10 @@ const App: React.FC = () => {
   const { speak, voices, selectedVoice, setSelectedVoice } = useSpeech();
   const { trackScreen, trackSelectContent, logGameEvent } = useAnalytics(); // Analytics Hook
   
-  // --- Helpers ---
-  const getPhonetic = (text: string) => PRONUNCIATION_MAP[text.toUpperCase()] || text;
-  const getSpeakableText = (item: GameItem) => item.spokenText || item.text;
-  const getArticle = (item: GameItem) => item.gender === 'f' ? 'a' : 'o';
+  // --- Helpers (Memoized to prevent infinite loops in hooks) ---
+  const getPhonetic = useCallback((text: string) => PRONUNCIATION_MAP[text.toUpperCase()] || text, []);
+  const getSpeakableText = useCallback((item: GameItem) => item.spokenText || item.text, []);
+  const getArticle = useCallback((item: GameItem) => item.gender === 'f' ? 'a' : 'o', []);
 
   // --- Game Logic ---
   const quiz = useQuizGame(items, contentType, user, speak, getSpeakableText, getPhonetic, getArticle);

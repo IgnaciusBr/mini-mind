@@ -17,17 +17,27 @@ export const useFlashcardGame = (
         return;
     }
 
-    // Reset to 0 and speak first item
-    setIndex(0);
-    speak(getSpeakableText(items[0]));
+    // Function to pick next random card
+    const nextRandomCard = () => {
+        setIndex(prev => {
+            let nextIndex = Math.floor(Math.random() * items.length);
+            
+            // Try to avoid the same card twice if we have enough items
+            if (items.length > 1 && nextIndex === prev) {
+                nextIndex = (nextIndex + 1) % items.length;
+            }
+            
+            // Speak inside the setState callback to ensure we have the correct new index reference logic,
+            // though practically we just use the calculated nextIndex.
+            speak(getSpeakableText(items[nextIndex]));
+            return nextIndex;
+        });
+    };
 
-    intervalRef.current = setInterval(() => {
-      setIndex(prev => {
-        const next = (prev + 1) % items.length;
-        speak(getSpeakableText(items[next]));
-        return next;
-      });
-    }, 3500);
+    // Initial item
+    nextRandomCard();
+
+    intervalRef.current = setInterval(nextRandomCard, 3500);
 
     return () => clearInterval(intervalRef.current);
   }, [isActive, items, speak, getSpeakableText]);
